@@ -10,11 +10,9 @@ from openapi_spec_validator import validate as validate_spec
 from prance import ResolvingParser
 from pydantic import BaseModel, HttpUrl
 
-from app.generate import generate_endpoint_client
+from app.generate import HTTP_METHODS, generate_all_endpoints
 
 app = FastAPI()
-
-HTTP_METHODS = {"get", "post", "put", "patch", "delete", "options", "head"}
 
 
 class ParseSpecRequest(BaseModel):
@@ -55,26 +53,27 @@ def parse_spec_stream(url: str) -> Iterator[str]:
         if method.lower() in HTTP_METHODS
     ]
 
-    yield _sse("progress", {"stage": "generating"})
-    generated = None
+    generated: list[dict] = []
+    skipped: list[dict] = []
     with tempfile.TemporaryDirectory() as tmp:
-        for path, methods in spec.get("paths", {}).items():
-            if "get" not in methods:
-                continue
-            try:
-                generated = generate_endpoint_client(spec, path, "get", Path(tmp))
-                break
-            except ValueError:
-                continue
+        for item in generate_all_endpoints(spec, Path(tmp)):
+            yield _sse(
+                "progress",
+                {"stage": "generating", "current": item["index"], "total": item["total"], "endpoint": item["endpoint"]},
+            )
+            if item["status"] == "generated":
+                generated.append({k: v for k, v in item.items() if k not in {"index", "total", "status"}})
+            else:
+                skipped.append({"endpoint": item["endpoint"], "reason": item["reason"]})
 
     result = {
         "title": spec.get("info", {}).get("title"),
         "version": spec.get("info", {}).get("version"),
         "endpoint_count": len(endpoints),
         "endpoints": endpoints,
+        "generated": generated,
+        "skipped": skipped,
     }
-    if generated is not None:
-        result["generated"] = generated
     yield _sse("result", result)
 
 

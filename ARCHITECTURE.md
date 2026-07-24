@@ -57,10 +57,14 @@ User pastes OpenAPI/Swagger URL
 
 ## Current implementation status
 `POST /api/parse-spec` fetches a spec URL, parses it with prance, validates it with
-openapi-spec-validator, then deterministically generates a typed Python model + client method
-for the first GET endpoint with a JSON response (datamodel-code-generator + Jinja2), streaming
-progress/result over SSE. Only one endpoint is generated so far (proof of pipeline, not full
-coverage), no request-body/query-param support yet, no sandbox, no LLM calls yet.
+openapi-spec-validator, then deterministically generates a standalone typed Python model +
+client method for every operation that has a JSON response (datamodel-code-generator + Jinja2),
+supporting path params, query params, and JSON request bodies. Operations without a JSON
+response are reported as skipped, not silently dropped. Progress streams per-endpoint over SSE
+(`generating`, current/total). Live-verified against the real Swagger Petstore spec: 14/19
+operations generated, 5/19 correctly skipped, every generated file compile-checked. Each
+endpoint's client is still its own independent file (not yet merged into one client package),
+no sandbox execution, no LLM calls yet.
 
 ---
 
@@ -68,10 +72,10 @@ coverage), no request-body/query-param support yet, no sandbox, no LLM calls yet
 | File | Purpose |
 |------|---------|
 | `backend/app/main.py` | FastAPI app; `/api/parse-spec` SSE endpoint |
-| `backend/app/generate.py` | Deterministic model+client generation for one GET operation |
+| `backend/app/generate.py` | Deterministic model+client generation for every eligible operation |
 | `backend/requirements.txt` | Plain pip deps, no uv/poetry |
-| `backend/tests/test_main.py` | Parse/validate endpoint tests + live Petstore smoke test (`-m live`) |
-| `backend/tests/test_generate.py` | Generation compile-check tests |
+| `backend/tests/test_main.py` | Parse/validate endpoint tests + full-spec live Petstore test (`-m live`) |
+| `backend/tests/test_generate.py` | Generation compile-check tests (path params, query params, request bodies, skip path) |
 
 ---
 
@@ -83,9 +87,13 @@ ANTHROPIC_API_KEY=       # not yet used by any code
 ---
 
 ## Known Technical Debt
-- [ ] Generation only handles one GET endpoint per job so far, no request bodies/query params, no path-param name sanitization (assumes the OpenAPI param name is already a valid Python identifier).
+- [ ] Each endpoint generates its own standalone client class/file — not yet merged into one cohesive client package per job. Likely to happen alongside sandbox execution (Task 8), once there's a real file tree to hand the sandbox.
+- [ ] No path-param name sanitization (assumes the OpenAPI param name is already a valid Python identifier — true for Petstore, not guaranteed generally).
+- [ ] Query/path param types only cover JSON scalar types (string/integer/number/boolean); arrays/objects fall back to `str`.
+- [ ] Nested sub-schemas (e.g. a "Category" object embedded in multiple endpoints' Pet schema) are regenerated independently per endpoint with no cross-endpoint dedup — harmless while each endpoint is its own file, would need addressing if/when client files get merged.
 - [ ] datamodel-code-generator's own naming heuristic can produce odd class names for array/root responses (e.g. truncates a trailing "s" when wrapping a list) — cosmetic, still valid Python, not something our code controls.
-- [ ] No sandbox runner yet. **Docker is not available at all in this WSL dev environment** (needs Docker Desktop WSL integration enabled, or Docker installed natively in WSL) — must resolve before Task 8.
+- [x] Docker installed natively in WSL (not Docker Desktop integration, matching the Oracle VM's native-Docker deploy target) — confirmed working via `docker run hello-world`.
+- [ ] No sandbox runner yet — Task 8, now unblocked.
 - [ ] No rate-limiting SQLite store yet.
 - [ ] No frontend yet.
 - [ ] Local dev venv created via pip virtualenv workaround (sudo had no TTY for `apt install python3.14-venv`) — install `python3.14-venv` properly on the Oracle VM at deploy time for clean, reproducible provisioning.
