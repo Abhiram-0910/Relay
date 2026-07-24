@@ -56,9 +56,11 @@ User pastes OpenAPI/Swagger URL
 ```
 
 ## Current implementation status
-Only the first pipeline stage exists: `POST /api/parse-spec` fetches a spec URL, parses it with
-prance, validates it with openapi-spec-validator, and streams progress/result over SSE. No
-generation, no sandbox, no LLM calls yet.
+`POST /api/parse-spec` fetches a spec URL, parses it with prance, validates it with
+openapi-spec-validator, then deterministically generates a typed Python model + client method
+for the first GET endpoint with a JSON response (datamodel-code-generator + Jinja2), streaming
+progress/result over SSE. Only one endpoint is generated so far (proof of pipeline, not full
+coverage), no request-body/query-param support yet, no sandbox, no LLM calls yet.
 
 ---
 
@@ -66,8 +68,10 @@ generation, no sandbox, no LLM calls yet.
 | File | Purpose |
 |------|---------|
 | `backend/app/main.py` | FastAPI app; `/api/parse-spec` SSE endpoint |
+| `backend/app/generate.py` | Deterministic model+client generation for one GET operation |
 | `backend/requirements.txt` | Plain pip deps, no uv/poetry |
-| `backend/tests/test_main.py` | Smoke test for the parse endpoint |
+| `backend/tests/test_main.py` | Parse/validate endpoint tests + live Petstore smoke test (`-m live`) |
+| `backend/tests/test_generate.py` | Generation compile-check tests |
 
 ---
 
@@ -79,8 +83,9 @@ ANTHROPIC_API_KEY=       # not yet used by any code
 ---
 
 ## Known Technical Debt
-- [ ] No generation step yet (types/client templates).
-- [ ] No sandbox runner yet.
+- [ ] Generation only handles one GET endpoint per job so far, no request bodies/query params, no path-param name sanitization (assumes the OpenAPI param name is already a valid Python identifier).
+- [ ] datamodel-code-generator's own naming heuristic can produce odd class names for array/root responses (e.g. truncates a trailing "s" when wrapping a list) — cosmetic, still valid Python, not something our code controls.
+- [ ] No sandbox runner yet. **Docker is not available at all in this WSL dev environment** (needs Docker Desktop WSL integration enabled, or Docker installed natively in WSL) — must resolve before Task 8.
 - [ ] No rate-limiting SQLite store yet.
 - [ ] No frontend yet.
 - [ ] Local dev venv created via pip virtualenv workaround (sudo had no TTY for `apt install python3.14-venv`) — install `python3.14-venv` properly on the Oracle VM at deploy time for clean, reproducible provisioning.

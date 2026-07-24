@@ -6,9 +6,9 @@ Read this at the start of every session to know what to work on next.
 ---
 
 ## 🔴 Current Sprint (Do This Now)
-- [ ] Backend: parse + validate an OpenAPI URL over SSE (`/api/parse-spec`) — in progress
-- [ ] Backend: generate Python types (datamodel-code-generator) + client (Jinja2) from the parsed spec
-- [ ] Backend: Docker sandbox runner — one `--rm`, network-restricted, capped container that executes the generated client against the live API
+- [x] Backend: parse + validate an OpenAPI URL over SSE (`/api/parse-spec`)
+- [x] Backend: generate Python types (datamodel-code-generator) + client (Jinja2) — one GET endpoint slice proven, needs to scale to full spec + request bodies/query params
+- [ ] Backend: Docker sandbox runner — one `--rm`, network-restricted, capped container that executes the generated client against the live API. **Blocked: Docker unavailable in this WSL dev environment, resolve first.**
 - [ ] Backend: Claude Haiku self-correction loop on sandbox failure, capped retries, escalate to Sonnet after repeated failures
 - [ ] Wire the above into one end-to-end job, tested against Open-Meteo
 
@@ -31,6 +31,8 @@ Read this at the start of every session to know what to work on next.
 
 ## ✅ Completed
 - [x] Filled in CLAUDE.md, ARCHITECTURE.md, TODO.md, git init — Session 1, 2026-07-24
+- [x] `/api/parse-spec` SSE endpoint: fetch + parse (prance) + validate (openapi-spec-validator) — Session 1, 2026-07-24
+- [x] Deterministic generation slice: one GET endpoint's Pydantic model + client method, live-verified against real Petstore spec, compile-checked — Session 1, 2026-07-24
 
 ---
 
@@ -40,4 +42,4 @@ Read this at the start of every session to know what to work on next.
 ---
 
 ## 💡 Ideas / Notes
-- Confirm Docker is actually available in the dev/deploy environment before building the sandbox runner (flagged as a risk in session 1).
+- Docker confirmed **unavailable** in this WSL dev environment (`docker: command not found`) — needs Docker Desktop WSL integration or native WSL install before Task 8 (sandbox runner).

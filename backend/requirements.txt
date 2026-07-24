@@ -3,5 +3,7 @@ uvicorn[standard]
 requests
 prance
 openapi-spec-validator
+jinja2
+datamodel-code-generator
 pytest
 httpx

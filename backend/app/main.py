@@ -1,4 +1,6 @@
 import json
+import tempfile
+from pathlib import Path
 from typing import Iterator
 
 import requests
@@ -7,6 +9,8 @@ from fastapi.responses import StreamingResponse
 from openapi_spec_validator import validate as validate_spec
 from prance import ResolvingParser
 from pydantic import BaseModel, HttpUrl
+
+from app.generate import generate_endpoint_client
 
 app = FastAPI()
 
@@ -51,15 +55,27 @@ def parse_spec_stream(url: str) -> Iterator[str]:
         if method.lower() in HTTP_METHODS
     ]
 
-    yield _sse(
-        "result",
-        {
-            "title": spec.get("info", {}).get("title"),
-            "version": spec.get("info", {}).get("version"),
-            "endpoint_count": len(endpoints),
-            "endpoints": endpoints,
-        },
-    )
+    yield _sse("progress", {"stage": "generating"})
+    generated = None
+    with tempfile.TemporaryDirectory() as tmp:
+        for path, methods in spec.get("paths", {}).items():
+            if "get" not in methods:
+                continue
+            try:
+                generated = generate_endpoint_client(spec, path, "get", Path(tmp))
+                break
+            except ValueError:
+                continue
+
+    result = {
+        "title": spec.get("info", {}).get("title"),
+        "version": spec.get("info", {}).get("version"),
+        "endpoint_count": len(endpoints),
+        "endpoints": endpoints,
+    }
+    if generated is not None:
+        result["generated"] = generated
+    yield _sse("result", result)
 
 
 @app.post("/api/parse-spec")
