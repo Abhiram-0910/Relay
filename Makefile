@@ -1,10 +1,13 @@
 # relay — dev tasks
 
-# Build the sandbox base image once; reused for every validation run (never pip-installed per run).
-# Must be run once in local dev before Task 8 tests, and once on the Oracle VM at deploy (Task 15).
+# Build both sandbox images once; reused for every validation run (never pip-installed per run).
+# Must be run once in local dev before sandbox tests, and once on the Oracle VM at deploy (Task 15).
+#   relay-sandbox  — runs the generated client (no external route of its own)
+#   relay-sidecar  — the per-run pinned egress relay (socat)
 .PHONY: sandbox-build
 sandbox-build:
-	cd backend && docker build -t relay-sandbox -f sandbox/Dockerfile .
+	cd backend && docker build -t relay-sandbox -f sandbox/Dockerfile . \
+	           && docker build -t relay-sidecar -f sandbox/sidecar.Dockerfile .
 
 .PHONY: test
 test:

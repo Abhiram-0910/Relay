@@ -3,18 +3,19 @@
 One `--rm` container per run. The container is resource- and time-capped and its rootfs is
 read-only; the generated client package and a call-spec are mounted read-only.
 
-Network policy — read this before touching it:
-  The only SSRF control that matters right now is the PRE-FLIGHT one: `resolve_and_validate_host`
-  resolves the target hostname on the host and refuses to start a container if ANY resolved IP is
-  private / loopback / link-local / CGNAT / reserved (e.g. cloud metadata at 169.254.169.254).
-  We then pin that validated IP with `--add-host` so a DNS rebind can't swap it after the check
-  (TOCTOU). We do NOT yet have a true per-host egress firewall — Docker has no native "allow
-  exactly one host" without host iptables/nftables surgery, and it doesn't matter while the code
-  we run is our OWN deterministic template output, which only ever calls the spec's target URL.
-  # ponytail: real egress lockdown (block rogue direct-IP connections to other hosts) becomes
-  # necessary in Task 9 when UNTRUSTED LLM-generated code runs here. Upgrade path: put the
-  # container on a custom bridge with an nftables egress allowlist of the validated IP, or route
-  # it through a pinned forward-proxy. Until then, do not claim network isolation we don't have.
+Network policy — two composed layers, read before touching:
+  1. PRE-FLIGHT (`resolve_and_validate_host`): resolve the target host and refuse to start
+     anything if ANY resolved IP is private / loopback / link-local / CGNAT / reserved (e.g. cloud
+     metadata at 169.254.169.254). This decides the single IP the sandbox is allowed to reach.
+  2. NETWORK ISOLATION (this module): the sandbox container joins ONLY a per-run `--internal`
+     Docker network with no external route at all. A socat sidecar joins both that internal
+     network and the normal bridge, and forwards exclusively to the one pre-validated IP:port —
+     that allowlist is the socat argv, rebuilt every run, never a shared/static config. The
+     sandbox pins the target hostname to the sidecar's internal IP via `--add-host`, so the
+     unchanged generated client's normal call to self.base_url is the ONLY reachable destination.
+     Any other host/IP the code tries — even a perfectly legitimate public one — has no route.
+     TLS stays end-to-end: socat is a raw byte pipe, so the real server presents its real cert
+     against the real SNI; nothing terminates or re-resolves in between.
 """
 from __future__ import annotations
 
@@ -23,13 +24,17 @@ import json
 import socket
 import subprocess
 import tempfile
+import time
 import uuid
 from pathlib import Path
 from urllib.parse import urlparse
 
 RUNNER_PATH = Path(__file__).parent.parent / "sandbox" / "runner.py"
 SANDBOX_IMAGE = "relay-sandbox"
+SIDECAR_IMAGE = "relay-sidecar"
 RESULT_PREFIX = "RELAY_RESULT:"
+SIDECAR_READY_TIMEOUT = 5.0  # seconds to wait for socat to bind its listener
+_DOCKER_CMD_TIMEOUT = 30     # seconds for individual docker control-plane calls
 
 # Resource caps applied to every container. Named, not magic.
 DEFAULT_TIMEOUT_SECONDS = 20
@@ -107,6 +112,43 @@ def _parse_runner_output(stdout: str) -> dict | None:
     return None
 
 
+def _target_port(base_url: str) -> int:
+    parsed = urlparse(base_url)
+    if parsed.port:
+        return parsed.port
+    return 443 if parsed.scheme == "https" else 80
+
+
+def _docker(*args: str, check: bool = False) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["docker", *args], capture_output=True, text=True,
+        timeout=_DOCKER_CMD_TIMEOUT, check=check,
+    )
+
+
+def _container_ip(name: str, network: str) -> str:
+    result = _docker(
+        "inspect", "-f",
+        '{{ (index .NetworkSettings.Networks "' + network + '").IPAddress }}',
+        name,
+    )
+    ip = result.stdout.strip()
+    if not ip:
+        raise SandboxError(f"could not determine {name}'s IP on {network}: {result.stderr.strip()}")
+    return ip
+
+
+def _wait_sidecar_ready(name: str, timeout: float = SIDECAR_READY_TIMEOUT) -> None:
+    """Block until socat logs that it has bound its listener, else raise."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        logs = _docker("logs", name)
+        if "listening on" in (logs.stdout + logs.stderr).lower():
+            return
+        time.sleep(0.1)
+    raise SandboxError(f"sidecar {name} did not start listening within {timeout}s")
+
+
 def _report(status: str, detail: str, *, endpoint: dict | None, resolved_ip: str | None,
             http_status: int | None = None) -> dict:
     """Build the honest per-run report. `passed` is true ONLY for a verified, validated call."""
@@ -138,11 +180,13 @@ def run_in_sandbox(
     """
     endpoint = call_spec.get("endpoint")
 
-    if not _image_exists(image):
-        raise SandboxError(
-            f"{image!r} image not found — run "
-            f"`docker build -t {image} -f sandbox/Dockerfile .` (or `make sandbox-build`) first"
-        )
+    for required_image, dockerfile in ((image, "Dockerfile"), (SIDECAR_IMAGE, "sidecar.Dockerfile")):
+        if not _image_exists(required_image):
+            raise SandboxError(
+                f"{required_image!r} image not found — run "
+                f"`docker build -t {required_image} -f sandbox/{dockerfile} .` "
+                f"(or `make sandbox-build`) first"
+            )
 
     try:
         resolved_ip = resolve_and_validate_host(call_spec["base_url"])
@@ -150,36 +194,65 @@ def run_in_sandbox(
         return _report(STATUS_SSRF_BLOCKED, str(exc), endpoint=endpoint, resolved_ip=None)
 
     host = urlparse(call_spec["base_url"]).hostname
-    container_name = f"relay-sbx-{uuid.uuid4().hex[:12]}"
+    port = _target_port(call_spec["base_url"])
+    run_id = uuid.uuid4().hex[:12]
+    network = f"relay-net-{run_id}"
+    sidecar = f"relay-sidecar-{run_id}"
+    container = f"relay-sbx-{run_id}"
 
     with tempfile.TemporaryDirectory() as spec_dir:
         spec_path = Path(spec_dir) / "call_spec.json"
         spec_path.write_text(json.dumps(call_spec))
 
-        cmd = [
-            "docker", "run", "--rm", "--name", container_name,
-            "--network", "bridge",
-            "--add-host", f"{host}:{resolved_ip}",     # pin validated IP; defeats DNS rebinding
-            "--memory", memory, "--memory-swap", memory,  # equal => no swap
-            "--cpus", cpus, "--pids-limit", str(pids_limit),
-            "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
-            "--read-only", "--tmpfs", "/tmp",
-            "-v", f"{pkg_dir}:/sandbox/client_pkg:ro",
-            "-v", f"{RUNNER_PATH}:/sandbox/runner.py:ro",
-            "-v", f"{spec_path}:/sandbox/call_spec.json:ro",
-            image,
-        ]
-
         try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        except subprocess.TimeoutExpired:
-            # --rm cleans up on normal exit; a wall-clock kill leaves the container, so force it.
-            subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
-            return _report(
-                STATUS_CALL_FAILED,
-                f"wall-clock timeout after {timeout}s — container killed",
-                endpoint=endpoint, resolved_ip=resolved_ip,
+            # Internal network: no external route for anything attached to it.
+            _docker("network", "create", "--internal", network, check=True)
+
+            # Sidecar: the ONLY egress. Its allowlist is this argv — the one validated IP:port,
+            # forced IPv4 to match the pinned address. Rebuilt per run, never a shared config.
+            _docker(
+                "run", "-d", "--name", sidecar, "--network", network,
+                "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only",
+                SIDECAR_IMAGE,
+                "socat", "-d", "-d",
+                f"TCP4-LISTEN:{port},fork,reuseaddr", f"TCP4:{resolved_ip}:{port}",
+                check=True,
             )
+            # Give the sidecar (and only the sidecar) external access.
+            _docker("network", "connect", "bridge", sidecar, check=True)
+            sidecar_ip = _container_ip(sidecar, network)
+            _wait_sidecar_ready(sidecar)
+
+            cmd = [
+                "docker", "run", "--rm", "--name", container,
+                "--network", network,                    # internal only — no direct external route
+                "--add-host", f"{host}:{sidecar_ip}",    # target hostname resolves to the sidecar
+                "--memory", memory, "--memory-swap", memory,  # equal => no swap
+                "--cpus", cpus, "--pids-limit", str(pids_limit),
+                "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+                "--read-only", "--tmpfs", "/tmp",
+                "-v", f"{pkg_dir}:/sandbox/client_pkg:ro",
+                "-v", f"{RUNNER_PATH}:/sandbox/runner.py:ro",
+                "-v", f"{spec_path}:/sandbox/call_spec.json:ro",
+                image,
+            ]
+            try:
+                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+            except subprocess.TimeoutExpired:
+                # --rm cleans up on normal exit; a wall-clock kill leaves it, so force it.
+                _docker("rm", "-f", container)
+                return _report(
+                    STATUS_CALL_FAILED,
+                    f"wall-clock timeout after {timeout}s — container killed",
+                    endpoint=endpoint, resolved_ip=resolved_ip,
+                )
+        except subprocess.CalledProcessError as exc:
+            raise SandboxError(f"sandbox network setup failed: {exc.stderr or exc}") from exc
+        finally:
+            # Always tear down, even on timeout/setup failure. --rm may have handled the sandbox.
+            _docker("rm", "-f", container)
+            _docker("rm", "-f", sidecar)
+            _docker("network", "rm", network)
 
     result = _parse_runner_output(proc.stdout)
     if result is None:

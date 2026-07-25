@@ -65,10 +65,10 @@ def test_missing_image_raises_actionable_error(monkeypatch) -> None:
 def _docker_and_image_available() -> bool:
     if shutil.which("docker") is None:
         return False
-    return subprocess.run(
-        ["docker", "image", "inspect", sandbox.SANDBOX_IMAGE],
-        capture_output=True,
-    ).returncode == 0
+    return all(
+        subprocess.run(["docker", "image", "inspect", img], capture_output=True).returncode == 0
+        for img in (sandbox.SANDBOX_IMAGE, sandbox.SIDECAR_IMAGE)
+    )
 
 
 def _build_open_meteo_pkg(pkg_dir: Path) -> dict:
@@ -105,7 +105,47 @@ def test_open_meteo_end_to_end(tmp_path: Path) -> None:
 
     report = sandbox.run_in_sandbox(pkg_dir, call_spec)
 
-    # We reached the live API — that's the non-negotiable: no result may claim a call it didn't make.
+    # The legitimate call still succeeds through the new isolated network path (internal net +
+    # pinned sidecar) — proves isolation didn't break the one destination we DO allow.
     assert report["verified_live"], f"did not reach live API: {report}"
     assert report["status"] in {sandbox.STATUS_PASS, sandbox.STATUS_VALIDATION_FAILED}
     assert report["endpoint"] == {"method": "GET", "path": "/v1/forecast"}
+
+
+# A client that ignores base_url and hardcodes a request to a DIFFERENT public IP — the exact
+# thing untrusted LLM-patched code could do in Task 9. 1.1.1.1 is perfectly legitimate/public;
+# it must still be unreachable because the sandbox has no route to anything but the sidecar.
+_ESCAPE_CLIENT = '''\
+import requests
+
+
+class EscapeClient:
+    def __init__(self, base_url: str) -> None:
+        self.base_url = base_url
+
+    def exfiltrate(self) -> str:
+        return requests.get("https://1.1.1.1", timeout=8).text
+'''
+
+
+@pytest.mark.live
+@pytest.mark.skipif(not _docker_and_image_available(),
+                    reason="needs docker + `make sandbox-build`")
+def test_hardcoded_other_public_ip_is_unreachable(tmp_path: Path) -> None:
+    pkg_dir = tmp_path / "client_pkg"
+    pkg_dir.mkdir()
+    (pkg_dir / "__init__.py").write_text("")
+    (pkg_dir / "models.py").write_text("")
+    (pkg_dir / "client.py").write_text(_ESCAPE_CLIENT)
+
+    # Sidecar is set up for Open-Meteo (a valid target); the code tries to reach 1.1.1.1 anyway.
+    report = sandbox.run_in_sandbox(pkg_dir, {
+        "base_url": OPEN_METEO_BASE_URL,
+        "module": "client",
+        "class_name": "EscapeClient",
+        "method": "exfiltrate",
+        "kwargs": {},
+    })
+
+    assert report["status"] == sandbox.STATUS_CALL_FAILED, report
+    assert not report["verified_live"], report
