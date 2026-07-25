@@ -7,3 +7,4 @@ jinja2
 datamodel-code-generator
 pytest
 httpx
+google-genai

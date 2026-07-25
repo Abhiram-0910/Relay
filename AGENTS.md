@@ -39,7 +39,7 @@ Claude reads this at the START of every new session to understand what happened 
 
 **Left incomplete:**
 - [ ] Docker sandbox runner (Task 8) — not started.
-- [ ] Claude Haiku self-correction loop on sandbox failure, escalate to Sonnet — not started, depends on Task 8.
+- [ ] Gemini Flash self-correction loop on sandbox failure, escalate to Gemini Pro — not started, depends on Task 8. (Originally planned on Anthropic Claude; switched to Gemini free tier — see Session 2 correction.)
 - [ ] SQLite (WAL) per-IP rate limiting — not started.
 - [ ] Frontend (Next.js) — not started.
 - [ ] TypeScript client generation (openapi-typescript) — not started.
@@ -76,13 +76,38 @@ Claude reads this at the START of every new session to understand what happened 
 - `make` output is piped through an `rtk` wrapper that errored in this environment; ran `docker build` directly instead. The Makefile target itself is correct.
 
 **Left incomplete (unchanged from Session 1 unless noted):**
-- [ ] Task 9: Claude Haiku→Sonnet self-correction loop on sandbox failure — depends on the structured status this session produced. **Add real egress firewalling before untrusted LLM code runs in the sandbox.**
+- [ ] Task 9: Gemini Flash→Pro self-correction loop on sandbox failure — depends on the structured status this session produced. (Anthropic dropped — Gemini free tier only, never enable billing.)
 - [ ] Wire parse→generate→sandbox into one end-to-end SSE job.
 - [ ] Merge per-endpoint client files into one client package.
 - [ ] TS generation, frontend, SQLite rate limiting, Prism mock fallback — not started.
 
 **Next session should start with:**
-- Task 9. Consume `sandbox.run_in_sandbox`'s report; feed `call_failed`/`verified_live_validation_failed` detail back to Haiku for a capped self-correction loop, escalate to Sonnet on repeated failure. First, decide the egress-firewall upgrade (see ARCHITECTURE debt) since Task 9 introduces untrusted generated code into the container.
+- Task 9. Consume `sandbox.run_in_sandbox`'s report; feed `call_failed`/`verified_live_validation_failed` detail back to Gemini Flash for a capped self-correction loop (2 Flash → 1 Pro → hard fail), via the official Google Gen AI Python SDK. Free tier only — never enable billing. Egress isolation (Task 8.5) is already done, so untrusted patched code is safe to run.
+
+---
+
+### Session 2 (cont'd) — 2026-07-25 — LLM stack correction + Task 9
+**Goal:** Drop Anthropic entirely (zero paid LLM calls, ever); switch the self-correction layer to Google Gemini's permanent free tier; build Task 9.
+
+**Completed:**
+- [x] Removed all Anthropic/Claude/Haiku/Sonnet LLM references from CLAUDE.md, ARCHITECTURE.md, TODO.md, and forward-looking AGENTS.md pointers. Only remaining "Anthropic" mentions are the new *prohibitions* (never create an Anthropic key/billing; the historical "switched away" notes).
+- [x] CLAUDE.md: new non-negotiable rule — **never enable billing on the Google Cloud project backing the Gemini key** (enabling billing deletes the free tier). New LLM-layer section: Gemini Flash default, Pro escalation only, capped 2 Flash → 1 Pro → hard fail, key from `GEMINI_API_KEY`.
+- [x] `backend/app/correct.py` — `self_correct`: capped Flash→Pro ladder, every patch re-run through the full sandbox (SSRF + internal net + pinned sidecar), full attempt log, `corrector_error` short-circuits the ladder (protects quota). Gemini corrector uses the official `google-genai` SDK with structured JSON output (`response_schema`); returns full corrected file contents (not a diff). Sandbox runner + corrector both dependency-injected.
+- [x] `google-genai` added to requirements (authorized — user directed the SDK). `backend/tests/test_correct.py` — 4 hermetic loop tests (early-stop, exact Flash/Flash/Pro cap, corrector-error stop, refuse-passing-run) + 1 live real-Gemini test. Full hermetic suite: 23 passed.
+- [x] **Live-verified end to end** on a deliberately-broken Open-Meteo response model: BEFORE = `verified_live_validation_failed` (real live call), Gemini `gemini-3.5-flash` attempt #1 removed the bogus required field → AFTER = `verified_pass`. Never escalated to Pro. Demo/probe scripts deleted after confirmation; `.env` stays gitignored/uncommitted.
+
+**Decisions made:**
+- Looked up the current Google Gen AI Python SDK before wiring (Context7 + PyPI): package `google-genai`, `from google import genai`, `genai.Client()` auto-reads `GEMINI_API_KEY`, `client.models.generate_content(model=, contents=, config=types.GenerateContentConfig(...))`, structured output via `response_schema`. Did not assume from memory.
+- Model IDs pinned (not `-latest`), per user. **But `gemini-2.5-flash` is now retired for new API keys** (API returns 404 "no longer available to new users") — discovered live. Re-probed the key's actual models and pinned Flash to `gemini-3.5-flash` (verified working). Pro pinned at `gemini-2.5-pro` (reachable but free-tier Pro quota was 429-exhausted at pin time — consistent with the ~50/day scarcity the ladder assumes). IDs are constants in `correct.py` for one-line swaps.
+- Corrector returns full file contents, not diffs — robust to apply; loop writes back only files that actually changed and logs which.
+- Key handling: never entered into the chat. Local dev reads a gitignored `backend/.env`; the demo loaded it internally and was never `cat`'d.
+
+**Problems encountered:**
+- Interactive `read -s` inside `!` session commands doesn't get a TTY, and `!` stdout isn't surfaced to the assistant — so the key-prompt approach failed silently. Resolved by having the user create `backend/.env` out-of-band and driving the run from the assistant's own tool shell (which loads `.env` internally).
+- First live run failed fast with a 404 on `gemini-2.5-flash` — caught cleanly by the `corrector_error` path (ladder stopped, no wasted attempts), which is how the stale-model-id problem surfaced.
+
+**Next session should start with:**
+- Wire the full pipeline into one end-to-end SSE job: parse → generate → sandbox → self-correct, streamed, tested against Open-Meteo. Then merge per-endpoint client files into one package.
 
 ---
 

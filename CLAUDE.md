@@ -5,7 +5,7 @@
 API client (Python or TypeScript), validated by actually running the generated code against the
 live or mocked target API in a sandboxed Docker container — not just checked for compiling.
 Stretch goal: also emit an MCP-server-compliant tool wrapper from the same pipeline.
-**Stack:** FastAPI (Python) + Next.js 14/Tailwind + Docker sandbox + Anthropic Claude (Haiku 4.5 default, Sonnet 5 escalation)
+**Stack:** FastAPI (Python) + Next.js 14/Tailwind + Docker sandbox + Google Gemini API (Gemini Flash default, Gemini Pro escalation — permanent free tier, no billing ever)
 **Current phase:** MVP
 **Primary goal this sprint:** End-to-end pipeline — paste an OpenAPI URL, get a validated typed client back, tested live against Open-Meteo's public API as the default demo target.
 
@@ -29,7 +29,21 @@ Global rules from `~/.claude/CLAUDE.md` apply to this project unless overridden 
 - Type/client generation must stay deterministic templating (Jinja2, datamodel-code-generator, openapi-typescript) — the LLM only touches self-correction on validation failure, never first-pass generation.
 - All API routes must have Pydantic-typed request/response models and input validation.
 
+### LLM Layer (Google Gemini — free tier only)
+- Use the Google Gemini API via the official Google Gen AI Python SDK. No other LLM provider.
+- Zero paid LLM calls anywhere — not capped, not budgeted, ZERO. The entire LLM layer runs on
+  Gemini's permanent free tier (no card required).
+- Default model: **Gemini Flash** (~1,500 req/day free). Escalate to **Gemini Pro** only after
+  repeated Flash failures — Pro's free quota is ~50/day, so treat every Pro call as scarce.
+- Self-correction is capped: 2 Flash attempts, then 1 Pro attempt, then hard fail with full
+  history. Never an uncapped retry loop — the cap protects free-tier quota.
+- API key comes from `GEMINI_API_KEY` (env var only, never hardcoded).
+
 ### Forbidden
+- **Never enable billing on the Google Cloud project backing the Gemini API key.** Enabling
+  billing deletes the free tier entirely and makes every call billable. This project must NEVER
+  have a payment method attached — no billing account, no spend caps, no paid tier, nothing.
+- Never create an Anthropic API key, billing account, or spend-cap config anywhere in this project.
 - Never store real API credentials — auth handling only ever generates env-var placeholders.
 - Never let sandbox containers run without `--rm`, network restrictions, and resource/time caps.
 - Never use a DB for job/progress state — in-memory + SSE only. SQLite is for per-IP rate limiting only.
@@ -37,7 +51,7 @@ Global rules from `~/.claude/CLAUDE.md` apply to this project unless overridden 
 
 ### Preferred Patterns
 - Stream all long-running work (parse, generate, validate) to the client over SSE.
-- Escalate Haiku → Sonnet only after repeated self-correction failures, never as the default.
+- Escalate Gemini Flash → Gemini Pro only after repeated self-correction failures, never as the default.
 
 ---
 

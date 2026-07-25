@@ -12,7 +12,7 @@ Keep this updated as the project evolves.
 | Backend | FastAPI (Python) | Async, native SSE via StreamingResponse, typed with Pydantic |
 | Spec parsing | prance + openapi-spec-validator | Deterministic, no LLM in the parse/validate path |
 | Type/client generation | Jinja2 + datamodel-code-generator (Python) + openapi-typescript (TS) | Deterministic templating, not LLM-generated code |
-| LLM | Anthropic API — Claude Haiku 4.5 default, escalate to Sonnet 5 on repeated validation failure | Cost control; only pay for a bigger model when the cheap one can't self-correct |
+| LLM | Google Gemini API (official Google Gen AI Python SDK) — Gemini Flash default, escalate to Gemini Pro on repeated validation failure | Permanent free tier, no card/billing ever; Flash ~1,500 req/day, Pro ~50/day (scarce). Zero paid calls. |
 | Validation sandbox | Docker, one `--rm` container per run, network-restricted, resource/time capped | Proves generated code actually runs against the real API, not just "compiles" |
 | Mock fallback | Stoplight Prism | For endpoints unsafe to call live (destructive/paid/rate-limited) |
 | Job/progress | In-memory async store + Server-Sent Events | No DB needed for ephemeral job state |
@@ -49,8 +49,8 @@ User pastes OpenAPI/Swagger URL
   → generate types (datamodel-code-generator / openapi-typescript) + client (Jinja2 templates)
   → run generated client in a sandboxed Docker container against the live API (or Prism mock
     if unsafe to call live)
-  → on failure: feed error back to Claude Haiku for a self-correction patch (capped retries),
-    escalate to Sonnet only after repeated Haiku failures
+  → on failure: feed error back to Gemini Flash for a self-correction patch (capped: 2 Flash
+    attempts, then 1 Gemini Pro attempt, then hard fail), escalate to Pro only after Flash fails
   → stream progress the whole way via SSE
   → return validated client + a pass/fail report
 ```
@@ -82,6 +82,17 @@ run; `run_in_sandbox` fails fast with the exact build command if it's missing (n
 This build must run once in local dev before Task 8 tests, and once on the Oracle VM at deploy
 (Task 15).
 
+Self-correction (Task 9) works: `app/correct.py::self_correct` consumes a failing sandbox report
+and asks Google Gemini (free tier, via the official `google-genai` SDK) for corrected file
+contents, re-running every patch through the FULL sandbox. Capped ladder: 2 `gemini-3.5-flash`
+attempts → 1 `gemini-2.5-pro` attempt → hard fail with the full attempt log. `verified_live_
+validation_failed` → patch models.py; `call_failed` → patch client.py. The sandbox runner and the
+Gemini corrector are both dependency-injected so the loop is unit-tested without Docker or quota.
+Live-verified: a deliberately-broken Open-Meteo response model was fixed by Flash on attempt #1 →
+`verified_pass`. Key comes from `GEMINI_API_KEY` (local dev: gitignored `backend/.env`).
+Note: `gemini-2.5-flash` was retired for new API keys ("no longer available to new users"), so
+Flash is pinned to `gemini-3.5-flash`; model IDs are constants in `correct.py` for one-line swaps.
+
 ---
 
 ## Key Files
@@ -96,6 +107,8 @@ This build must run once in local dev before Task 8 tests, and once on the Oracl
 | `backend/sandbox/runner.py` | In-container entrypoint: imports the generated client, makes one call, emits a structured result line |
 | `backend/sandbox/Dockerfile` | Minimal `python:3.12-slim` + requests + pydantic base image (`relay-sandbox`), built once |
 | `backend/sandbox/sidecar.Dockerfile` | Alpine + socat egress sidecar (`relay-sidecar`); per-run pinned relay to the one validated IP:port |
+| `backend/app/correct.py` | Gemini self-correction loop: capped Flash→Pro ladder, sandbox re-run per attempt, structured attempt log |
+| `backend/tests/test_correct.py` | Hermetic loop-logic tests (fake sandbox+corrector) + live real-Gemini fix of a broken Open-Meteo client (`-m live`) |
 | `backend/tests/test_sandbox.py` | SSRF-guard unit tests (default) + live tests (`-m live`): Open-Meteo E2E and other-public-IP-unreachable isolation proof |
 | `Makefile` | `make sandbox-build` (builds both reused images), `test`, `test-live` |
 
@@ -103,7 +116,7 @@ This build must run once in local dev before Task 8 tests, and once on the Oracl
 
 ## Environment Variables Required
 ```bash
-ANTHROPIC_API_KEY=       # not yet used by any code
+GEMINI_API_KEY=          # Google Gemini API key — FREE TIER ONLY, never attach billing
 ```
 
 ---

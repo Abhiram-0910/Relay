@@ -8,7 +8,8 @@ Read this at the start of every session to know what to work on next.
 ## 🔴 Current Sprint (Do This Now)
 - [x] Backend: Docker sandbox runner — one `--rm`, resource/time-capped, SSRF-guarded container that executes a generated client against the live API. **Done Session 2**: `verified_pass` live against Open-Meteo `/v1/forecast`.
 - [x] **Task 8.5: network isolation** — sandbox on a per-run `--internal` net, egress only via a socat sidecar pinned to the single validated IP:port. **Done Session 2**: live-verified — Open-Meteo still `verified_pass`, a hardcoded call to a different public IP (1.1.1.1) fails unreachable. Untrusted LLM code is now safe to run here.
-- [ ] **Next up (Task 9):** Backend: Claude Haiku self-correction loop on sandbox failure, capped retries, escalate to Sonnet after repeated failures. Consume `sandbox.run_in_sandbox`'s structured status — `verified_live_validation_failed` → fix the response model, `call_failed` → fix request-building.
+- [x] **Task 9: Gemini Flash self-correction loop** — capped 2 Flash → 1 Pro → hard fail, every attempt re-run through the full sandbox. **Done Session 2**: live-verified — a deliberately-broken Open-Meteo response model (`verified_live_validation_failed`) fixed by `gemini-3.5-flash` on attempt #1 → `verified_pass`.
+- [ ] **Next up:** Wire parse→generate→sandbox→self-correct into one end-to-end SSE job, tested against Open-Meteo.
 - [ ] Wire parse→generate→sandbox into one end-to-end job over SSE, tested against Open-Meteo
 - [ ] Merge per-endpoint client files into one cohesive client package (currently each endpoint is standalone) — natural to do alongside the end-to-end job
 
@@ -30,6 +31,8 @@ Read this at the start of every session to know what to work on next.
 ---
 
 ## ✅ Completed
+- [x] Gemini self-correction loop (Task 9): capped Flash→Pro ladder, sandbox re-run every attempt; live-verified fix of a broken Open-Meteo model → `verified_pass` — Session 2, 2026-07-25
+- [x] Dropped Anthropic entirely; LLM layer is Google Gemini free tier only (never enable billing) — Session 2, 2026-07-25
 - [x] Sandbox network isolation (Task 8.5): per-run `--internal` net + pinned socat sidecar; other-public-IP-unreachable proven live — Session 2, 2026-07-25
 - [x] Docker sandbox runner: `--rm`, read-only, capped, SSRF pre-flight guard, structured report; live `verified_pass` on Open-Meteo `/v1/forecast` — Session 2, 2026-07-25
 - [x] Filled in CLAUDE.md, ARCHITECTURE.md, TODO.md, git init — Session 1, 2026-07-24
