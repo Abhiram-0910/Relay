@@ -12,7 +12,7 @@ Read this at the start of every session to know what to work on next.
 - [x] **End-to-end pipeline runner** (`ci_runner.py`): parse→generate→sandbox→self-correct in one job. **Done Session 2**: live `succeeded` / forecast `verified_pass` against Open-Meteo.
 - [x] **Hosting pivot**: Cloudflare Worker (trigger + KV state + KV per-IP rate limit) + GitHub Actions workflow invoking `ci_runner`. **Done Session 2**: 9 worker unit tests (rate-limit-before-dispatch, run-id isolation, callback auth, write throttle) + ci_runner live-verified. **Not yet deployed** — see below.
 - [ ] **Next up (out-of-band, needs the user):** provision + deploy per `worker/DEPLOY.md` — create KV namespace, set `GH_PAT`/`CALLBACK_SECRET` Worker secrets + `CALLBACK_SECRET`/`GEMINI_API_KEY` GitHub Actions secrets, `wrangler deploy`, then `scripts/verify_deployed.sh <url>` for the live integration check.
-- [ ] Add an SSRF guard to the spec-fetch/`$ref` step in `ci_runner` before exposing arbitrary public specs (see ARCHITECTURE debt).
+- [x] SSRF guard on the spec-fetch/`$ref` step in `ci_runner` — **Done Session 2**: pre-fetch host validation + `guarded_prance_resolve` gating prance's fetch choke point (blocks private hosts + `file`/`python` schemes); 3 default-suite tests. Open-Meteo still `verified_pass` through the guard.
 - [ ] Merge per-endpoint client files into one cohesive client package (currently each endpoint is standalone).
 
 ---

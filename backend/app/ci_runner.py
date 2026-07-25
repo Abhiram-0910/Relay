@@ -17,6 +17,7 @@ built-in GITHUB_TOKEN — that token is for talking to GitHub, and grants nothin
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sys
@@ -24,13 +25,56 @@ import tempfile
 import time
 from pathlib import Path
 
+import prance.util.url as _prance_url
 import requests
 from openapi_spec_validator import validate as validate_spec
 from prance import ResolvingParser
 
 from app.correct import self_correct
 from app.generate import generate_all_endpoints
-from app.sandbox import STATUS_PASS, run_in_sandbox
+from app.sandbox import STATUS_PASS, SSRFError, resolve_and_validate_host, run_in_sandbox
+
+# $ref resolution runs on the CI runner, which has network access — an untrusted spec must not be
+# able to make prance fetch a private/metadata host or read local files. We gate EVERY url prance
+# fetches at its single choke point (prance.util.url.fetch_url_text, which all remote/file/python
+# ref fetches route through, transitively included), reusing the sandbox's SSRF host check.
+_ALLOWED_REF_SCHEMES = {"http", "https"}
+
+
+def _guard_fetch_url(parsed_url) -> None:
+    """Reject a URL prance is about to fetch for a $ref (raises SSRFError to block it).
+
+    file:// and python:// would read runner files / import packages, so only http(s) is allowed,
+    and its resolved host must be public (reuses sandbox.resolve_and_validate_host)."""
+    scheme = (parsed_url.scheme or "").lower()
+    if scheme not in _ALLOWED_REF_SCHEMES:
+        raise SSRFError(f"refusing $ref with non-http(s) scheme: {parsed_url.geturl()!r}")
+    resolve_and_validate_host(parsed_url.geturl())  # raises SSRFError if host is private/reserved
+
+
+@contextlib.contextmanager
+def guarded_prance_resolve():
+    """Gate every URL prance fetches during $ref resolution through _guard_fetch_url.
+
+    Wraps prance's single fetch choke point. Asserts that function still exists so a prance
+    restructure fails LOUDLY (the default-suite test below breaks) instead of silently reopening
+    the gap. Restores the original in `finally` so the patch is scoped to this block.
+    """
+    assert hasattr(_prance_url, "fetch_url_text"), (
+        "prance.util.url.fetch_url_text is gone — the $ref SSRF guard would be bypassed. "
+        "Pin prance or re-point the guard at the new fetch choke point before proceeding."
+    )
+    original = _prance_url.fetch_url_text
+
+    def guarded(url, *args, **kwargs):
+        _guard_fetch_url(url)
+        return original(url, *args, **kwargs)
+
+    _prance_url.fetch_url_text = guarded
+    try:
+        yield
+    finally:
+        _prance_url.fetch_url_text = original
 
 # Demo hook: for spec targets whose required params have no example/default and whose spec omits
 # `servers`, supply a known-good base_url + params so the proven Open-Meteo flow works end to end.
@@ -142,9 +186,11 @@ def run(spec_url: str, reporter: Reporter | None = None) -> dict:
     rep = reporter or Reporter()
     try:
         rep.send("running", stage="fetching_spec")
+        resolve_and_validate_host(spec_url)  # reject a private/metadata spec_url BEFORE fetching it
         resp = requests.get(spec_url, timeout=15)
         resp.raise_for_status()
-        spec = ResolvingParser(spec_string=resp.text).specification
+        with guarded_prance_resolve():  # gate every $ref prance fetches during resolution
+            spec = ResolvingParser(spec_string=resp.text).specification
         validate_spec(spec)
         title = spec.get("info", {}).get("title")
         rep.send("running", stage="spec_validated", progress={"title": title})
