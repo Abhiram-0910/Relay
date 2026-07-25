@@ -63,8 +63,22 @@ supporting path params, query params, and JSON request bodies. Operations withou
 response are reported as skipped, not silently dropped. Progress streams per-endpoint over SSE
 (`generating`, current/total). Live-verified against the real Swagger Petstore spec: 14/19
 operations generated, 5/19 correctly skipped, every generated file compile-checked. Each
-endpoint's client is still its own independent file (not yet merged into one client package),
-no sandbox execution, no LLM calls yet.
+endpoint's client is still its own independent file (not yet merged into one client package).
+
+Sandbox execution (Task 8) works: `app/sandbox.py` runs one generated client method in a single
+`--rm` container (read-only rootfs, `--cap-drop ALL`, no-new-privileges, memory/CPU/pids caps,
+wall-clock timeout with guaranteed kill). SSRF is blocked pre-flight — `resolve_and_validate_host`
+refuses any target whose DNS resolves to a non-public IP (`is_global`, which also catches CGNAT;
+plus multicast), and the validated IP is pinned via `--add-host` against DNS rebinding. Reports
+carry a structured status: `verified_pass` (real call + response validated — the only pass),
+`verified_live_validation_failed`, `call_failed`, or `ssrf_blocked`, each with detail for Task 9.
+Live-verified end to end: the Open-Meteo `/v1/forecast` client returns `verified_pass`. No LLM /
+self-correction yet.
+
+The sandbox base image (`relay-sandbox`) is built ONCE via `make sandbox-build` and reused per
+run; `run_in_sandbox` fails fast with the exact build command if it's missing (never auto-builds).
+This build must run once in local dev before Task 8 tests, and once on the Oracle VM at deploy
+(Task 15).
 
 ---
 
@@ -76,6 +90,11 @@ no sandbox execution, no LLM calls yet.
 | `backend/requirements.txt` | Plain pip deps, no uv/poetry |
 | `backend/tests/test_main.py` | Parse/validate endpoint tests + full-spec live Petstore test (`-m live`) |
 | `backend/tests/test_generate.py` | Generation compile-check tests (path params, query params, request bodies, skip path) |
+| `backend/app/sandbox.py` | Host-side Docker sandbox runner: SSRF pre-flight guard + locked-down `--rm` container + structured report |
+| `backend/sandbox/runner.py` | In-container entrypoint: imports the generated client, makes one call, emits a structured result line |
+| `backend/sandbox/Dockerfile` | Minimal `python:3.12-slim` + requests + pydantic base image (`relay-sandbox`), built once |
+| `backend/tests/test_sandbox.py` | SSRF-guard unit tests (default) + live Open-Meteo end-to-end test (`-m live`) |
+| `Makefile` | `make sandbox-build` (build the reused image), `test`, `test-live` |
 
 ---
 
@@ -93,7 +112,9 @@ ANTHROPIC_API_KEY=       # not yet used by any code
 - [ ] Nested sub-schemas (e.g. a "Category" object embedded in multiple endpoints' Pet schema) are regenerated independently per endpoint with no cross-endpoint dedup — harmless while each endpoint is its own file, would need addressing if/when client files get merged.
 - [ ] datamodel-code-generator's own naming heuristic can produce odd class names for array/root responses (e.g. truncates a trailing "s" when wrapping a list) — cosmetic, still valid Python, not something our code controls.
 - [x] Docker installed natively in WSL (not Docker Desktop integration, matching the Oracle VM's native-Docker deploy target) — confirmed working via `docker run hello-world`.
-- [ ] No sandbox runner yet — Task 8, now unblocked.
+- [x] Sandbox runner built (Task 8) — one `--rm` container per run, SSRF pre-flight, resource/time caps, structured report.
+- [ ] **No true per-host egress firewall.** SSRF is closed pre-flight (DNS resolve + reject non-public + `--add-host` pin), which is sufficient while the code we run is our OWN deterministic template output. Becomes a real gap in Task 9 when UNTRUSTED LLM-generated code runs — that code could open direct-IP connections to other hosts. Upgrade path (in the `ponytail:` note in `sandbox.py`): custom bridge + nftables egress allowlist of the validated IP, or a pinned forward-proxy. Do not claim network isolation we don't have until then.
+- [ ] `--add-host` pins a single IP (prefers IPv4); a dual-stack target still validates every resolved family, but only one IP is pinned. Fine for single-A-record hosts; revisit if a target needs multi-IP pinning.
 - [ ] No rate-limiting SQLite store yet.
 - [ ] No frontend yet.
 - [ ] Local dev venv created via pip virtualenv workaround (sudo had no TTY for `apt install python3.14-venv`) — install `python3.14-venv` properly on the Oracle VM at deploy time for clean, reproducible provisioning.
