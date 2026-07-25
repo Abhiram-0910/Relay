@@ -1,0 +1,56 @@
+name: relay-generate
+
+# Triggered only by the Relay Worker via the workflow_dispatch REST API (Worker holds a
+# fine-grained PAT with Actions: write). The Worker mints run_id and passes its own origin as
+# callback_url; this job reports progress back to that Worker's KV using the shared CALLBACK_SECRET.
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Worker-minted run id (KV key)"
+        required: true
+      spec_url:
+        description: "OpenAPI/Swagger spec URL to process"
+        required: true
+      callback_url:
+        description: "Worker base URL for progress callbacks"
+        required: true
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest          # GitHub-hosted runner ships Docker for the sandbox
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install backend deps
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Build sandbox images (relay-sandbox + relay-sidecar)
+        run: make sandbox-build
+
+      - name: Run pipeline
+        working-directory: backend
+        env:
+          RELAY_RUN_ID: ${{ inputs.run_id }}
+          RELAY_SPEC_URL: ${{ inputs.spec_url }}
+          RELAY_CALLBACK_URL: ${{ inputs.callback_url }}
+          # Shared secret authenticates callbacks to the Worker — NOT the built-in GITHUB_TOKEN.
+          RELAY_CALLBACK_SECRET: ${{ secrets.CALLBACK_SECRET }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python -m app.ci_runner
+
+      # If the job dies before the runner reports a result (dep install, docker, OOM, timeout),
+      # tell the Worker so the run shows "failed" instead of hanging at "queued" until TTL.
+      - name: Report infra failure
+        if: failure()
+        run: |
+          curl -sS -X POST "${{ inputs.callback_url }}/api/runs/${{ inputs.run_id }}/progress" \
+            -H "Authorization: Bearer ${{ secrets.CALLBACK_SECRET }}" \
+            -H "Content-Type: application/json" \
+            -d '{"status":"failed","stage":"ci_error","error":"pipeline job failed before reporting a result"}'

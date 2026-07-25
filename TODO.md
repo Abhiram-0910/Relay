@@ -9,24 +9,26 @@ Read this at the start of every session to know what to work on next.
 - [x] Backend: Docker sandbox runner — one `--rm`, resource/time-capped, SSRF-guarded container that executes a generated client against the live API. **Done Session 2**: `verified_pass` live against Open-Meteo `/v1/forecast`.
 - [x] **Task 8.5: network isolation** — sandbox on a per-run `--internal` net, egress only via a socat sidecar pinned to the single validated IP:port. **Done Session 2**: live-verified — Open-Meteo still `verified_pass`, a hardcoded call to a different public IP (1.1.1.1) fails unreachable. Untrusted LLM code is now safe to run here.
 - [x] **Task 9: Gemini Flash self-correction loop** — capped 2 Flash → 1 Pro → hard fail, every attempt re-run through the full sandbox. **Done Session 2**: live-verified — a deliberately-broken Open-Meteo response model (`verified_live_validation_failed`) fixed by `gemini-3.5-flash` on attempt #1 → `verified_pass`.
-- [ ] **Next up:** Wire parse→generate→sandbox→self-correct into one end-to-end SSE job, tested against Open-Meteo.
-- [ ] Wire parse→generate→sandbox into one end-to-end job over SSE, tested against Open-Meteo
-- [ ] Merge per-endpoint client files into one cohesive client package (currently each endpoint is standalone) — natural to do alongside the end-to-end job
+- [x] **End-to-end pipeline runner** (`ci_runner.py`): parse→generate→sandbox→self-correct in one job. **Done Session 2**: live `succeeded` / forecast `verified_pass` against Open-Meteo.
+- [x] **Hosting pivot**: Cloudflare Worker (trigger + KV state + KV per-IP rate limit) + GitHub Actions workflow invoking `ci_runner`. **Done Session 2**: 9 worker unit tests (rate-limit-before-dispatch, run-id isolation, callback auth, write throttle) + ci_runner live-verified. **Not yet deployed** — see below.
+- [ ] **Next up (out-of-band, needs the user):** provision + deploy per `worker/DEPLOY.md` — create KV namespace, set `GH_PAT`/`CALLBACK_SECRET` Worker secrets + `CALLBACK_SECRET`/`GEMINI_API_KEY` GitHub Actions secrets, `wrangler deploy`, then `scripts/verify_deployed.sh <url>` for the live integration check.
+- [ ] Add an SSRF guard to the spec-fetch/`$ref` step in `ci_runner` before exposing arbitrary public specs (see ARCHITECTURE debt).
+- [ ] Merge per-endpoint client files into one cohesive client package (currently each endpoint is standalone).
 
 ---
 
 ## 🟡 Up Next (After Current Sprint)
 - [ ] TypeScript client generation (openapi-typescript)
-- [ ] Frontend: Next.js page to paste a URL and watch SSE progress
-- [ ] SQLite (WAL) per-IP daily rate limiting
+- [ ] Task 13 — Frontend: Next.js + Tailwind on Vercel, built against the deployed Worker API (paste URL → poll progress)
+- [ ] General required-param synthesis (retire the Open-Meteo demo-param hook)
 - [ ] Prism mock fallback for endpoints unsafe to call live
 
 ---
 
 ## 🟢 Backlog (Future)
 - [ ] MCP-server-compliant tool wrapper output (stretch goal)
-- [ ] Caddy reverse proxy + Oracle Cloud VM deploy — **must run `make sandbox-build` once on the VM** (the sandbox runner fails fast without the `relay-sandbox` image)
-- [ ] Vercel deploy for frontend
+- [ ] ~~Caddy + Oracle Cloud VM deploy~~ — dropped in favor of the Cloudflare Worker + GitHub Actions hosting pivot (no always-on VM; the Action builds the sandbox images per run)
+- [ ] Vercel deploy for frontend (Task 13)
 
 ---
 

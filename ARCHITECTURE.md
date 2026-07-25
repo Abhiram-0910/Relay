@@ -15,10 +15,12 @@ Keep this updated as the project evolves.
 | LLM | Google Gemini API (official Google Gen AI Python SDK) — Gemini Flash default, escalate to Gemini Pro on repeated validation failure | Permanent free tier, no card/billing ever; Flash ~1,500 req/day, Pro ~50/day (scarce). Zero paid calls. |
 | Validation sandbox | Docker, one `--rm` container per run, network-restricted, resource/time capped | Proves generated code actually runs against the real API, not just "compiles" |
 | Mock fallback | Stoplight Prism | For endpoints unsafe to call live (destructive/paid/rate-limited) |
-| Job/progress | In-memory async store + Server-Sent Events | No DB needed for ephemeral job state |
-| Persistence | SQLite (WAL mode) | Per-IP daily free-generation rate limiting only — nothing else |
-| Reverse proxy | Caddy | Automatic HTTPS on the Oracle Cloud VM |
-| Deployment | Backend: Oracle Cloud Always Free VM (Ubuntu 24.04, Docker). Frontend: Vercel free tier | Cost: $0 |
+| Public API / edge | Cloudflare Worker | Stateless front door: trigger, KV state, per-IP rate limit. Free tier, no server to run. |
+| Compute | GitHub Actions (workflow_dispatch, ubuntu-latest) | Runs the pipeline incl. Docker sandbox; public repo = free unlimited minutes |
+| Job/progress + results | Cloudflare Worker KV (hosted); in-memory + SSE (local FastAPI dev) | No DB; run state namespaced by run id. Local dev keeps the SSE path. |
+| Rate limiting | KV daily counter (`rl:{ip}:{day}`) in the Worker | Per-IP free-generation cap; no SQLite/DB (superseded the earlier SQLite plan) |
+| Mock fallback | Stoplight Prism | For endpoints unsafe to call live (destructive/paid/rate-limited) |
+| Deployment | Worker: `wrangler deploy` (Cloudflare). Compute: GitHub Actions. Frontend (Task 13): Vercel | Cost: $0 |
 | Auth handling | Detected from spec, generates env-var placeholders only | Never stores real credentials |
 
 ---
@@ -95,6 +97,35 @@ Flash is pinned to `gemini-3.5-flash`; model IDs are constants in `correct.py` f
 
 ---
 
+## Hosting architecture (Cloudflare Worker + GitHub Actions + KV)
+No always-on server. A stateless Cloudflare Worker is the public front door; a GitHub Action is the
+compute (GitHub-hosted runners ship Docker, so the Task 8/8.5 sandbox runs there unchanged; public
+repo = free unlimited Actions minutes).
+
+```
+Browser ─POST /api/runs {specUrl}─► Worker
+                                     1. validate URL
+                                     2. per-IP daily rate-limit (KV) ─► 429  ⟵ BEFORE dispatch
+                                     3. runId=randomUUID; KV put run:{runId}=queued
+                                     4. GitHub workflow_dispatch (Bearer GH_PAT) inputs{run_id,spec_url,callback_url}
+                                     5. 202 {runId,statusUrl}
+GitHub Action runs backend/app/ci_runner.py (parse→generate→sandbox→self-correct)
+     └─ checkpoints ─► POST {callback_url}/api/runs/{runId}/progress (Bearer CALLBACK_SECRET)
+                        Worker verifies secret, throttles ≤1 write/sec/key ─► KV put run:{runId}
+Browser ─GET /api/runs/{runId} (poll)─► Worker ─► KV get ─► snapshot
+```
+
+Three credentials, three jobs: `GH_PAT` (Worker→GitHub, dispatch only), `CALLBACK_SECRET` (Action
+→Worker, shared secret authenticating callbacks), `GEMINI_API_KEY` (Action→Gemini). The Action's
+built-in `GITHUB_TOKEN` is used only for checkout — never to call the Worker. Run state is
+namespaced by the Worker-minted `runId`, so concurrent visitors never cross. Rate limit is a KV
+daily counter (`rl:{ip}:{YYYYMMDD}`, end-of-day TTL, default 3/IP/day, over-limit costs 0 writes).
+Progress is coalesced to a handful of KV writes per run (KV Free = 1,000 writes/day, 1 write/sec
+per key); the Worker enforces the throttle so a buggy reporter can't blow the budget. Provisioning:
+`worker/DEPLOY.md`. Verify a deployment: `scripts/verify_deployed.sh <worker-url>`.
+
+---
+
 ## Key Files
 | File | Purpose |
 |------|---------|
@@ -110,13 +141,29 @@ Flash is pinned to `gemini-3.5-flash`; model IDs are constants in `correct.py` f
 | `backend/app/correct.py` | Gemini self-correction loop: capped Flash→Pro ladder, sandbox re-run per attempt, structured attempt log |
 | `backend/tests/test_correct.py` | Hermetic loop-logic tests (fake sandbox+corrector) + live real-Gemini fix of a broken Open-Meteo client (`-m live`) |
 | `backend/tests/test_sandbox.py` | SSRF-guard unit tests (default) + live tests (`-m live`): Open-Meteo E2E and other-public-IP-unreachable isolation proof |
+| `backend/app/ci_runner.py` | End-to-end pipeline runner for CI: parse→generate→sandbox→self-correct, posts checkpoints to the Worker; local mode prints |
+| `backend/tests/test_ci_runner.py` | Hermetic tests: base-URL resolution, required-param synthesis, reporter local mode |
+| `worker/src/index.js` | Cloudflare Worker: `/api/runs` (trigger+rate-limit), `/api/runs/:id` (poll), `/api/runs/:id/progress` (auth callback) |
+| `worker/test/worker.test.js` | Worker unit tests (fake KV+fetch): rate-limit-before-dispatch, run-id isolation, callback auth, write throttle |
+| `worker/wrangler.jsonc`, `worker/DEPLOY.md` | Worker config + one-time provisioning (KV id, secrets, GitHub Actions secrets) |
+| `.github/workflows/generate.yml` | `workflow_dispatch` job: build sandbox images, run `ci_runner`, report infra failure back |
+| `scripts/verify_deployed.sh` | curl E2E against a deployed Worker: trigger, poll checkpoints, assert verified_pass, rate-limit, isolation |
 | `Makefile` | `make sandbox-build` (builds both reused images), `test`, `test-live` |
 
 ---
 
 ## Environment Variables Required
 ```bash
+# Backend / CI runner
 GEMINI_API_KEY=          # Google Gemini API key — FREE TIER ONLY, never attach billing
+RELAY_RUN_ID=            # (CI) Worker-minted run id
+RELAY_SPEC_URL=          # (CI) spec URL to process
+RELAY_CALLBACK_URL=      # (CI) Worker base URL for progress callbacks
+RELAY_CALLBACK_SECRET=   # (CI) shared secret for callback auth
+
+# Worker secrets (wrangler secret put) / GitHub Actions secrets — see worker/DEPLOY.md
+GH_PAT=                  # Worker: fine-grained PAT, Actions read/write — triggers workflow_dispatch
+CALLBACK_SECRET=         # Worker + GitHub Actions (same value) — authenticates callbacks
 ```
 
 ---
@@ -131,6 +178,8 @@ GEMINI_API_KEY=          # Google Gemini API key — FREE TIER ONLY, never attac
 - [x] Sandbox runner built (Task 8) — one `--rm` container per run, SSRF pre-flight, resource/time caps, structured report.
 - [x] **Per-host egress isolation (Task 8.5) — closed.** The sandbox container joins ONLY a per-run `--internal` Docker network with no external route. A socat sidecar (`relay-sidecar`) joins both that internal network and bridge, forwarding exclusively to the single pre-validated `IP:port` — that allowlist is the socat argv, templated per run, never a shared/static config. The target hostname is pinned to the sidecar's internal IP via `--add-host`, so the unchanged generated client's normal `self.base_url` call is the ONLY reachable destination; TLS stays end-to-end (socat is a raw byte pipe — real cert, real SNI, no re-resolution). Composes with the SSRF pre-flight, which decides the one IP the sidecar may reach. Live-verified: Open-Meteo still returns `verified_pass` through this path, and a hardcoded request to a different but perfectly-public IP (1.1.1.1) fails `call_failed / Network is unreachable`. This is what makes it safe to run Task 9's untrusted LLM-generated code here.
 - [ ] `--add-host` / sidecar pin a single IP (prefers IPv4); a dual-stack target still validates every resolved family, but only one IP is pinned/relayed. Fine for single-A-record hosts; revisit if a target needs multi-IP pinning.
-- [ ] No rate-limiting SQLite store yet.
-- [ ] No frontend yet.
+- [x] Rate limiting done via KV daily counter in the Worker (not SQLite — no DB under Worker hosting). Best-effort atomic: a rare concurrent race from one IP could allow ~1 extra past the cap. Exact enforcement would need a Durable Object; acceptable for a free-generation abuse guard.
+- [ ] **Spec fetch + `$ref` resolution run on the GitHub runner WITHOUT an SSRF guard.** `ci_runner` fetches `spec_url` directly (requests) and prance's `ResolvingParser` may fetch `$ref` targets — a malicious spec could point at runner-internal/metadata addresses. Mitigated only by: ephemeral runner, no cloud creds by default, and the per-IP rate limit. The sandbox's SSRF guard protects the *generated-client* call, NOT this earlier spec-fetch step. Add a pre-fetch private-IP guard (reuse `sandbox.resolve_and_validate_host`) before this is exposed to arbitrary public specs beyond the demo.
+- [ ] Live-validation currently covers only idempotent GET endpoints whose required params can be synthesized from spec example/default, plus a hardcoded demo-param hook for Open-Meteo `/v1/forecast` (`_DEMO_TARGETS` in `ci_runner.py`). General param synthesis + safe handling of non-GET endpoints is a later task; non-synthesizable endpoints are honestly reported `generated_only`.
+- [ ] No frontend yet — deferred to Task 13 (Next.js + Tailwind on Vercel), to be built once against the proven Worker API.
 - [ ] Local dev venv created via pip virtualenv workaround (sudo had no TTY for `apt install python3.14-venv`) — install `python3.14-venv` properly on the Oracle VM at deploy time for clean, reproducible provisioning.

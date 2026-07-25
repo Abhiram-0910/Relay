@@ -111,4 +111,32 @@ Claude reads this at the START of every new session to understand what happened 
 
 ---
 
+### Session 2 (cont'd) — 2026-07-25 — Hosting pivot (Cloudflare Worker + GitHub Actions + KV)
+**Goal:** Host the pipeline with no always-on server: a Cloudflare Worker as the public front door (trigger + KV state + per-IP rate limit) and a GitHub Action as the compute (runs the Docker sandbox). Plan was confirmed point-by-point before any code.
+
+**Completed:**
+- [x] `backend/app/ci_runner.py` — end-to-end pipeline runner (also the deferred "wire into one job" task): fetch→parse→validate→generate-all→live-validate GET endpoints in the sandbox→self-correct. Posts coalesced checkpoints (fetching_spec → spec_validated → generated → live_validating → done) to the Worker via authenticated callback; local mode prints. **Live-verified**: Open-Meteo → `succeeded`, forecast `verified_pass`.
+- [x] `worker/src/index.js` — Cloudflare Worker: `POST /api/runs` (validate → rate-limit → mint runId → KV queued → workflow_dispatch → 202), `GET /api/runs/:id` (poll KV), `POST /api/runs/:id/progress` (Bearer CALLBACK_SECRET, Worker-enforced ≤1-write/sec-per-key throttle). 9 unit tests pass (fake KV+fetch): rate-limit-fires-before-dispatch, refund-on-dispatch-failure, run-id isolation, callback auth, throttle coalescing + terminal-always-writes.
+- [x] `.github/workflows/generate.yml` — `workflow_dispatch` (inputs run_id/spec_url/callback_url), builds sandbox images, runs `ci_runner`, and an `if: failure()` step that reports infra failure back so a dead job shows `failed` not eternal `queued`.
+- [x] `worker/DEPLOY.md` (provisioning), `scripts/verify_deployed.sh` (curl E2E against a deployed Worker), `worker/wrangler.jsonc`, `worker/package.json` + vitest.
+- [x] Docs: CLAUDE.md rate-limit/DB rules amended for the pivot; ARCHITECTURE.md hosting section + stack + key files + env + debt; TODO/backlog updated (Oracle VM deploy dropped). Backend suite 29 hermetic pass; worker 9 pass.
+
+**Decisions made:**
+- **Confirmed the plan's 5 points before coding** (endpoints, GitHub auth, three-credential model, run-id isolation, rate-limit-before-dispatch). Credentials: `GH_PAT` (Worker→GitHub dispatch), `CALLBACK_SECRET` (Action→Worker, shared), `GEMINI_API_KEY` (Action→Gemini). The Action's `GITHUB_TOKEN` is checkout-only, never calls the Worker.
+- **Native Rate Limiting binding rejected** (verified via docs): its `period` is 10s or 60s only — can't express a daily quota. Fell back to KV daily counter (`rl:{ip}:{YYYYMMDD}`, EOD TTL, LIMIT=3, over-limit = 0 writes). Dropped the native binding entirely — with a 3/day cap, a 60s burst limiter adds nothing.
+- **KV Free = 1,000 writes/day + 1 write/sec per key** (verified) → progress must be coalesced; the **Worker** enforces the throttle (not the reporter) so a buggy/retrying reporter can't blow the budget. A status *transition* or terminal result always writes; rapid same-status updates coalesce.
+- **Worker mints its own runId** (workflow_dispatch returns no reliable sync run id) → independent of GitHub, KV keys namespaced by runId → no cross-contamination.
+- Live-validation scoped to idempotent GETs with synthesizable required params + a clearly-marked Open-Meteo demo-param hook (`_DEMO_TARGETS`); everything else honestly `generated_only`.
+
+**Problems encountered:**
+- Worker test caught a real throttle bug: the `queued` entry set `updatedAt=now`, so the FIRST progress callback (queued→running, <1s later) was being coalesced/dropped. Fixed: coalesce only rapid SAME-status non-terminal updates; a status transition or terminal always writes.
+- Interactive `read -s` in `!` still unusable; kept the `.env`-out-of-band pattern. Root `.env` (PAT) and `backend/.env` (Gemini) both gitignored/untracked — never read.
+
+**Known gap (flagged, not yet closed):** `ci_runner` fetches `spec_url` and resolves `$ref`s on the runner WITHOUT an SSRF guard (the sandbox guard only protects the generated-client call). Mitigated by ephemeral runner + rate limit; add a pre-fetch private-IP guard before exposing arbitrary public specs. See ARCHITECTURE debt.
+
+**Next session should start with:**
+- Deploy is out-of-band (needs the user): follow `worker/DEPLOY.md`, then run `scripts/verify_deployed.sh <worker-url>` for the live integration check (trigger → poll checkpoints → verified_pass → rate-limit → isolation). After it's green: Task 13 frontend, then the spec-fetch SSRF guard.
+
+---
+
 <!-- Copy the block above for each new session -->

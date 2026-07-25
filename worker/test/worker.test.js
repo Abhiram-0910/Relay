@@ -1,0 +1,174 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { handle } from "../src/index.js";
+
+// In-memory KV double (Map-backed) matching the subset of the KV API the Worker uses.
+function fakeKV() {
+  const store = new Map();
+  return {
+    store,
+    async get(key, type) {
+      const v = store.get(key);
+      if (v == null) return null;
+      return type === "json" ? JSON.parse(v) : v;
+    },
+    async put(key, value) {
+      store.set(key, value);
+    },
+  };
+}
+
+function makeEnv(overrides = {}) {
+  return {
+    RELAY_KV: fakeKV(),
+    GH_OWNER: "Abhiram-0910",
+    GH_REPO: "Relay",
+    GH_WORKFLOW: "generate.yml",
+    GH_REF: "main",
+    RATE_LIMIT: "3",
+    GH_PAT: "pat-secret",
+    CALLBACK_SECRET: "callback-secret",
+    ...overrides,
+  };
+}
+
+function req(method, path, { body, headers } = {}) {
+  return new Request(`https://relay-worker.example.com${path}`, {
+    method,
+    headers: { "Content-Type": "application/json", ...headers },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
+
+let dispatch;
+beforeEach(() => {
+  dispatch = vi.fn(async () => new Response(null, { status: 204 })); // GitHub dispatch OK
+  vi.stubGlobal("fetch", dispatch);
+});
+afterEach(() => vi.unstubAllGlobals());
+
+const SPEC = { specUrl: "https://example.com/openapi.yml" };
+const IP = (ip) => ({ "CF-Connecting-IP": ip });
+
+describe("POST /api/runs", () => {
+  it("creates a run, stores it queued, and dispatches with the right inputs", async () => {
+    const env = makeEnv();
+    const res = await handle(req("POST", "/api/runs", { body: SPEC, headers: IP("1.1.1.1") }), env);
+    expect(res.status).toBe(202);
+    const { runId, status, statusUrl } = await res.json();
+    expect(status).toBe("queued");
+    expect(statusUrl).toBe(`/api/runs/${runId}`);
+
+    const stored = await env.RELAY_KV.get(`run:${runId}`, "json");
+    expect(stored.status).toBe("queued");
+
+    expect(dispatch).toHaveBeenCalledOnce();
+    const [url, opts] = dispatch.mock.calls[0];
+    expect(url).toContain("/repos/Abhiram-0910/Relay/actions/workflows/generate.yml/dispatches");
+    expect(opts.headers.Authorization).toBe("Bearer pat-secret");
+    const sent = JSON.parse(opts.body);
+    expect(sent.inputs.run_id).toBe(runId);
+    expect(sent.inputs.spec_url).toBe(SPEC.specUrl);
+    expect(sent.inputs.callback_url).toBe("https://relay-worker.example.com");
+  });
+
+  it("rejects an invalid spec URL with 400 and never dispatches", async () => {
+    const env = makeEnv();
+    const res = await handle(req("POST", "/api/runs", { body: { specUrl: "not-a-url" }, headers: IP("1.1.1.1") }), env);
+    expect(res.status).toBe(400);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("blocks past the per-IP daily limit BEFORE dispatching", async () => {
+    const env = makeEnv({ RATE_LIMIT: "1" });
+    const first = await handle(req("POST", "/api/runs", { body: SPEC, headers: IP("9.9.9.9") }), env);
+    expect(first.status).toBe(202);
+    const second = await handle(req("POST", "/api/runs", { body: SPEC, headers: IP("9.9.9.9") }), env);
+    expect(second.status).toBe(429);
+    expect((await second.json()).error).toBe("rate_limited");
+    expect(dispatch).toHaveBeenCalledOnce(); // the blocked one never reached dispatch
+  });
+
+  it("refunds the rate-limit count when dispatch fails", async () => {
+    const env = makeEnv({ RATE_LIMIT: "2" });
+    dispatch.mockResolvedValueOnce(new Response("boom", { status: 500 }));
+    const res = await handle(req("POST", "/api/runs", { body: SPEC, headers: IP("7.7.7.7") }), env);
+    expect(res.status).toBe(502);
+    // count was refunded to 0, so a subsequent request still succeeds
+    const day = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    expect(await env.RELAY_KV.get(`rl:7.7.7.7:${day}`)).toBe("0");
+  });
+});
+
+describe("run-id isolation", () => {
+  it("two concurrent runs get distinct ids and never cross-contaminate polls", async () => {
+    const env = makeEnv();
+    const a = await (await handle(req("POST", "/api/runs", { body: SPEC, headers: IP("2.2.2.2") }), env)).json();
+    const b = await (await handle(req("POST", "/api/runs", { body: SPEC, headers: IP("3.3.3.3") }), env)).json();
+    expect(a.runId).not.toBe(b.runId);
+
+    // advance run A to succeeded via its own progress callback
+    await handle(req("POST", `/api/runs/${a.runId}/progress`, {
+      body: { status: "succeeded", stage: "done", result: { title: "A" } },
+      headers: { Authorization: "Bearer callback-secret" },
+    }), env);
+
+    const polledA = await (await handle(req("GET", `/api/runs/${a.runId}`), env)).json();
+    const polledB = await (await handle(req("GET", `/api/runs/${b.runId}`), env)).json();
+    expect(polledA.status).toBe("succeeded");
+    expect(polledA.result.title).toBe("A");
+    expect(polledB.status).toBe("queued"); // untouched by A's update
+  });
+
+  it("returns 404 for an unknown run id", async () => {
+    const env = makeEnv();
+    const res = await handle(req("GET", "/api/runs/does-not-exist"), env);
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("POST /api/runs/:id/progress", () => {
+  async function seedRun(env) {
+    const created = await (await handle(req("POST", "/api/runs", { body: SPEC, headers: IP("4.4.4.4") }), env)).json();
+    return created.runId;
+  }
+
+  it("rejects a wrong/absent callback secret with 401", async () => {
+    const env = makeEnv();
+    const runId = await seedRun(env);
+    const res = await handle(req("POST", `/api/runs/${runId}/progress`, {
+      body: { status: "running" }, headers: { Authorization: "Bearer wrong" },
+    }), env);
+    expect(res.status).toBe(401);
+  });
+
+  it("accepts a valid update and reflects it on GET", async () => {
+    const env = makeEnv();
+    const runId = await seedRun(env);
+    const res = await handle(req("POST", `/api/runs/${runId}/progress`, {
+      body: { status: "running", stage: "generated", progress: { generated: 1 } },
+      headers: { Authorization: "Bearer callback-secret" },
+    }), env);
+    expect(res.status).toBe(204);
+    const polled = await (await handle(req("GET", `/api/runs/${runId}`), env)).json();
+    expect(polled.stage).toBe("generated");
+  });
+
+  it("coalesces a rapid second non-terminal update (throttle) but always writes terminal", async () => {
+    const env = makeEnv();
+    const runId = await seedRun(env);
+    const auth = { Authorization: "Bearer callback-secret" };
+
+    await handle(req("POST", `/api/runs/${runId}/progress`, { body: { status: "running", stage: "one" }, headers: auth }), env);
+    // immediate second non-terminal update -> coalesced, stage stays "one"
+    await handle(req("POST", `/api/runs/${runId}/progress`, { body: { status: "running", stage: "two" }, headers: auth }), env);
+    let polled = await (await handle(req("GET", `/api/runs/${runId}`), env)).json();
+    expect(polled.stage).toBe("one");
+
+    // a terminal update is written even within the throttle window
+    await handle(req("POST", `/api/runs/${runId}/progress`, { body: { status: "succeeded", stage: "done" }, headers: auth }), env);
+    polled = await (await handle(req("GET", `/api/runs/${runId}`), env)).json();
+    expect(polled.status).toBe("succeeded");
+    expect(polled.stage).toBe("done");
+  });
+});

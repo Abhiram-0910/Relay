@@ -46,11 +46,17 @@ Global rules from `~/.claude/CLAUDE.md` apply to this project unless overridden 
 - Never create an Anthropic API key, billing account, or spend-cap config anywhere in this project.
 - Never store real API credentials — auth handling only ever generates env-var placeholders.
 - Never let sandbox containers run without `--rm`, network restrictions, and resource/time caps.
-- Never use a DB for job/progress state — in-memory + SSE only. SQLite is for per-IP rate limiting only.
-- Never hardcode API keys or secrets.
+- Never use a DB for job/progress state. Hosted path: state + results live in Cloudflare Worker KV
+  (namespaced by run id); per-IP daily rate limiting is a KV counter (`rl:{ip}:{day}`, no SQLite).
+  Local FastAPI dev path streams job state over SSE (no DB either). (Supersedes the earlier
+  SQLite-for-rate-limiting rule — there is no SQLite under Worker hosting.)
+- Never hardcode API keys or secrets. Worker secrets via `wrangler secret put`; CI via GitHub
+  Actions secrets. The GitHub PAT, `CALLBACK_SECRET`, and `GEMINI_API_KEY` never enter git or chat.
+- Rate-limit check must run BEFORE triggering the GitHub Action (the expensive step).
 
 ### Preferred Patterns
-- Stream all long-running work (parse, generate, validate) to the client over SSE.
+- Local FastAPI dev: stream long-running work over SSE. Hosted: the CI runner posts coalesced
+  checkpoints to the Worker (KV); the Worker enforces the ≤1-write/sec-per-key throttle itself.
 - Escalate Gemini Flash → Gemini Pro only after repeated self-correction failures, never as the default.
 
 ---
