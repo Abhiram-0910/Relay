@@ -7,8 +7,8 @@ Claude reads this at the START of every new session to understand what happened 
 
 ## Project State
 **Last updated:** 2026-07-25
-**Current branch:** master
-**Overall status:** Backend pipeline through deterministic generation AND sandboxed live validation is working and live-verified (parse → validate → generate → run-in-sandbox). Open-Meteo `/v1/forecast` returns `verified_pass`. No LLM self-correction (Task 9) and no frontend yet.
+**Current branch:** main
+**Overall status:** Full pipeline is **deployed and live-verified end-to-end** — public Cloudflare Worker (`https://relay-worker.abhiram-dev.workers.dev`) → GitHub Actions → sandbox → Gemini self-correction → KV, with per-IP rate limiting and run-id isolation. `scripts/verify_deployed.sh` passes all checks (concurrent isolation, live Open-Meteo `verified_pass`, 429 at the cap). Only the frontend (Task 13) remains before the MVP is user-facing.
 
 ---
 
@@ -136,6 +136,28 @@ Claude reads this at the START of every new session to understand what happened 
 
 **Next session should start with:**
 - Deploy is out-of-band (needs the user): follow `worker/DEPLOY.md`, then run `scripts/verify_deployed.sh <worker-url>` for the live integration check (trigger → poll checkpoints → verified_pass → rate-limit → isolation). After it's green: Task 13 frontend, then the spec-fetch SSRF guard.
+
+---
+
+### Session 2 — CLOSE — 2026-07-25 — Hosting pivot DEPLOYED & live-verified
+**Status:** The Cloudflare Worker + GitHub Actions + KV pipeline is not just built — it is **deployed and passing end-to-end** at `https://relay-worker.abhiram-dev.workers.dev`.
+
+**Live verification (`scripts/verify_deployed.sh`): ALL CHECKS PASSED**
+- Two concurrent runs triggered, kept correctly isolated (distinct run ids, independent polling — no cross-contamination).
+- Both reached `verified_pass` on live Open-Meteo `/v1/forecast` through the full path (Worker → workflow_dispatch → Action builds sandbox images → ci_runner parse→generate→sandbox→self-correct → KV → poll).
+- Rate limiter correctly `429`'d request #4 (per-IP daily cap = 3), blocking before dispatch.
+
+**Deploy-time issues found and fixed (all resolved):**
+- **Default branch was `master`, not `main`.** `workflow_dispatch` (and the Worker's `GH_REF: main`) target `main`; renamed the branch to `main` so the trigger resolves. (Repo/config now consistently on `main`.)
+- **Git remote was never added.** The local repo had no `origin` — the workflow file wasn't on GitHub yet. Added the remote and pushed so `.github/workflows/generate.yml` exists on the default branch (required for `workflow_dispatch` to find it).
+- **`gh`/PAT lacked the `workflow` scope.** Pushing `.github/workflows/*` was rejected until the token had the `workflow` scope; re-scoped, then the push (and dispatch) succeeded.
+- KV namespace created; `wrangler.jsonc` now carries the real namespace id (`ccabebcb…`, an account-scoped identifier, not a secret). Worker secrets (`GH_PAT`, `CALLBACK_SECRET`) and GitHub Actions secrets (`CALLBACK_SECRET`, `GEMINI_API_KEY`) set out-of-band per DEPLOY.md.
+
+**Session 2 overall — shipped and live-verified:** Task 8 (Docker sandbox), Task 8.5 (network isolation), Task 9 (Gemini free-tier self-correction, Anthropic dropped), end-to-end `ci_runner`, spec-fetch SSRF guard, and the full hosting pivot (Worker + Actions + KV), now deployed. Backend 32 hermetic tests + worker 9 tests all green.
+
+**Next session — Task 13: frontend.**
+- Build the Next.js 14 + Tailwind frontend on Vercel, against the **proven, deployed** Worker API (`https://relay-worker.abhiram-dev.workers.dev`): paste an OpenAPI URL → `POST /api/runs` → poll `GET /api/runs/:id` and render the checkpoint progression (queued → running/stages → succeeded/failed) and the final per-endpoint `verified_pass` result. The API is stable and CORS-open; build the UI once against it, don't re-spec the backend.
+- After the frontend: retire the Open-Meteo demo-param hook (general required-param synthesis), then TypeScript client generation.
 
 ---
 
