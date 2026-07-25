@@ -1,21 +1,22 @@
 {
-  // Relay Worker — deploy with `wrangler deploy` from this dir. See DEPLOY.md for the one-time
-  // provisioning (KV namespace id, GH_PAT + CALLBACK_SECRET secrets).
-  "name": "relay-worker",
-  "main": "src/index.js",
-  "compatibility_date": "2024-11-01",
-
-  // Fill "id" after `wrangler kv namespace create RELAY_KV` (see DEPLOY.md). Binding name is fixed.
-  "kv_namespaces": [
-    { "binding": "RELAY_KV", "id": "REPLACE_WITH_KV_NAMESPACE_ID" }
-  ],
-
-  // Non-secret config. Secrets (GH_PAT, CALLBACK_SECRET) are set via `wrangler secret put`.
-  "vars": {
-    "GH_OWNER": "Abhiram-0910",
-    "GH_REPO": "Relay",
-    "GH_WORKFLOW": "generate.yml",
-    "GH_REF": "main",
-    "RATE_LIMIT": "3"
-  }
+	// Relay Worker — deploy with `wrangler deploy` from this dir. See DEPLOY.md for the one-time
+	// provisioning (KV namespace id, GH_PAT + CALLBACK_SECRET secrets).
+	"name": "relay-worker",
+	"main": "src/index.js",
+	"compatibility_date": "2024-11-01",
+	// Fill "id" after `wrangler kv namespace create RELAY_KV` (see DEPLOY.md). Binding name is fixed.
+	"kv_namespaces": [
+		{
+			"binding": "RELAY_KV",
+			"id": "ccabebcb8bfd4ae4a4c989f361c9e82f"
+		}
+	],
+	// Non-secret config. Secrets (GH_PAT, CALLBACK_SECRET) are set via `wrangler secret put`.
+	"vars": {
+		"GH_OWNER": "Abhiram-0910",
+		"GH_REPO": "Relay",
+		"GH_WORKFLOW": "generate.yml",
+		"GH_REF": "main",
+		"RATE_LIMIT": "3"
+	}
 }
