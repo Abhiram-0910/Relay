@@ -9,7 +9,7 @@ import pytest
 from prance import ResolvingParser
 
 from app import ci_runner
-from app.ci_runner import Reporter, _required_kwargs, _resolve_base_url
+from app.ci_runner import Reporter, _code_files, _required_kwargs, _resolve_base_url
 from app.sandbox import SSRFError
 
 
@@ -47,6 +47,20 @@ def test_required_kwargs_returns_none_when_unsynthesizable() -> None:
         {"name": "mystery", "required": True, "schema": {"type": "string"}},
     ]}}}}
     assert _required_kwargs(spec, "/x", "get") is None
+
+
+def test_code_files_emits_models_and_client_per_endpoint() -> None:
+    generated = [
+        {"endpoint": {"method": "GET", "path": "/a"}, "models_code": "M_A", "client_code": "C_A"},
+        {"endpoint": {"method": "GET", "path": "/b"}, "models_code": "M_B", "client_code": "C_B"},
+    ]
+    files = _code_files(generated)
+    assert [(f["endpoint"]["path"], f["name"], f["content"]) for f in files] == [
+        ("/a", "models.py", "M_A"),
+        ("/a", "client.py", "C_A"),
+        ("/b", "models.py", "M_B"),
+        ("/b", "client.py", "C_B"),
+    ]
 
 
 def test_reporter_local_mode_prints_without_callback(capsys, monkeypatch) -> None:

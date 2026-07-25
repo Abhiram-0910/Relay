@@ -1,4 +1,4 @@
-import type { CreateRunResponse, RateLimitInfo, RunSnapshot } from "./types";
+import type { CodeBundle, CreateRunResponse, RateLimitInfo, RunSnapshot } from "./types";
 
 // Worker URL comes from env — never hardcoded in a component.
 const BASE = process.env.NEXT_PUBLIC_WORKER_URL;
@@ -40,4 +40,12 @@ export async function getRun(runId: string): Promise<RunSnapshot | null> {
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`Poll failed (${res.status})`);
   return (await res.json()) as RunSnapshot;
+}
+
+/** Fetch the generated source on demand. Returns null if not stored (404). */
+export async function getCode(runId: string): Promise<CodeBundle | null> {
+  const res = await fetch(`${requireBase()}/api/runs/${runId}/code`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Fetching code failed (${res.status})`);
+  return (await res.json()) as CodeBundle;
 }

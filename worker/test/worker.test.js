@@ -172,3 +172,39 @@ describe("POST /api/runs/:id/progress", () => {
     expect(polled.stage).toBe("done");
   });
 });
+
+describe("generated code (code:{runId})", () => {
+  const auth = { Authorization: "Bearer callback-secret" };
+  const filePayload = (content) => ({
+    files: [{ endpoint: { method: "GET", path: "/x" }, name: "client.py", content }],
+  });
+
+  it("stores code (auth) and serves it back on GET; unknown id is 404", async () => {
+    const env = makeEnv();
+    await handle(req("POST", "/api/runs/r1/code", { body: filePayload("print('hi')"), headers: auth }), env);
+    const res = await handle(req("GET", "/api/runs/r1/code"), env);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.files[0].content).toBe("print('hi')");
+    expect(body.truncated).toBe(false);
+
+    expect((await handle(req("GET", "/api/runs/nope/code"), env)).status).toBe(404);
+  });
+
+  it("rejects a store without the callback secret", async () => {
+    const env = makeEnv();
+    const res = await handle(req("POST", "/api/runs/r2/code", { body: filePayload("x"), headers: { Authorization: "Bearer wrong" } }), env);
+    expect(res.status).toBe(401);
+    expect((await handle(req("GET", "/api/runs/r2/code"), env)).status).toBe(404); // nothing stored
+  });
+
+  it("size-guards a huge file: truncates content AND flags truncated (never silent)", async () => {
+    const env = makeEnv();
+    const huge = "a".repeat(300 * 1024); // > 256 KB per-file cap
+    await handle(req("POST", "/api/runs/r3/code", { body: filePayload(huge), headers: auth }), env);
+    const body = await (await handle(req("GET", "/api/runs/r3/code"), env)).json();
+    expect(body.truncated).toBe(true);
+    expect(body.files[0].truncated).toBe(true);
+    expect(body.files[0].content.length).toBeLessThan(huge.length);
+  });
+});

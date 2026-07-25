@@ -54,3 +54,16 @@ export interface RateLimitInfo {
   remaining: number;
   retryAfter: number;
 }
+
+export interface CodeFile {
+  endpoint: Endpoint | null;
+  name: string;
+  content: string;
+  truncated: boolean;
+}
+
+export interface CodeBundle {
+  files: CodeFile[];
+  truncated: boolean;
+  dropped: number;
+}

@@ -161,4 +161,15 @@ Claude reads this at the START of every new session to understand what happened 
 
 ---
 
+### Task 13 — IN PROGRESS — 2026-07-25 — Frontend
+**Slice 1 (loop) — done & committed (`411f624`):** Next.js 14 + Tailwind dark OLED frontend. Paste URL → `POST /api/runs` → poll `GET /api/runs/:id` every 1.5s → checkpoint timeline + per-endpoint validation report. Worker URL in `NEXT_PUBLIC_WORKER_URL` (never hardcoded). Status→color is a single source of truth (`lib/status.ts`, 5 hermetic tests) enforcing the honesty rule mechanically: emerald=verified_pass only, amber=generated_only/validation-fail/in-progress, red=failed/blocked/rate-limited. Honest 429 + failed-run rendering. Build/lint/types clean.
+
+**⚠️ OPEN — NOT closed:** The **429 rate-limit** state was verified LIVE against the deployed Worker, but the **polling timeline and succeeded-report** states were verified only against a **local mock of the real data shapes** — not a real live-running Action — because today's per-IP rate-limit quota (3/day) is spent. **Real live poll-loop-to-completion not yet re-verified in the frontend; do this once quota resets (~10h) before calling Task 13 fully proven.**
+
+**Slice 2 (code viewer) — done:** `ci_runner` POSTs per-endpoint source (`_code_files`: models.py + client.py each) to a new authenticated Worker callback `POST /api/runs/:id/code`; Worker stores it as a separate `code:{runId}` KV entry (size-guarded — per-file 256 KB / total 2 MB caps, truncation FLAGGED not silent) with TTL, served by public `GET /api/runs/:id/code`. Frontend: on-demand "View generated code" → tabs (models.py/client.py per endpoint), dependency-free Python syntax highlighter (`lib/highlight.ts`, cool violet/sky palette deliberately distinct from status emerald/amber/red), download button. Honesty extended to code: a truncated bundle shows an amber "Partial output" banner + `(partial)` tab marker + a note that the download is also partial — verified via mock-drive screenshot. Tests: worker 12 (incl. store-auth + size-guard-flags-truncation), frontend 7 (incl. highlighter round-trip: tokens must reconstruct input exactly, so displayed code can't be silently corrupted). Backend 33 (incl. `_code_files`).
+
+**⚠️ STILL OPEN (unchanged):** Real live poll-loop-to-completion — and now the live code-fetch path — not yet re-verified in the frontend against a real running Action (today's 3/day quota is spent). The code viewer's normal + truncated states were verified against a mock of the real data shapes, same as the poll loop. Do a real live run once quota resets (~10h) before calling Task 13 fully proven.
+
+---
+
 <!-- Copy the block above for each new session -->

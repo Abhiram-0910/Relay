@@ -32,6 +32,12 @@ const json = (body, status = 200, extraHeaders = {}) =>
   });
 
 const runKey = (id) => `run:${id}`;
+const codeKey = (id) => `code:${id}`;
+
+// Generated code is stored in its OWN KV entry (fetched on demand), not the polled status payload.
+// Size-guarded so a huge spec can't exceed KV's value limit — truncation is flagged, never silent.
+const CODE_MAX_FILE_BYTES = 256 * 1024; // per file
+const CODE_MAX_TOTAL_BYTES = 2 * 1024 * 1024; // total stored (well under KV's 25 MiB value cap)
 
 function secondsToMidnightUTC(now = new Date()) {
   const midnight = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1);
@@ -174,6 +180,59 @@ async function handleProgress(request, env, runId) {
   return new Response(null, { status: 204 });
 }
 
+// Enforce the size caps, truncating file contents if needed and FLAGGING it (never silent).
+function guardCode(payload) {
+  let truncated = Boolean(payload?.truncated);
+  let budget = CODE_MAX_TOTAL_BYTES;
+  const files = [];
+  for (const f of payload?.files ?? []) {
+    let content = String(f?.content ?? "");
+    let fileTruncated = Boolean(f?.truncated);
+    if (content.length > CODE_MAX_FILE_BYTES) {
+      content = content.slice(0, CODE_MAX_FILE_BYTES);
+      fileTruncated = true;
+      truncated = true;
+    }
+    if (content.length > budget) {
+      content = content.slice(0, Math.max(0, budget));
+      fileTruncated = true;
+      truncated = true;
+    }
+    budget -= content.length;
+    files.push({ endpoint: f?.endpoint ?? null, name: f?.name ?? "file", content, truncated: fileTruncated });
+    if (budget <= 0) {
+      truncated = true; // any remaining files are dropped
+      break;
+    }
+  }
+  const dropped = (payload?.files?.length ?? 0) - files.length;
+  return { files, truncated: truncated || dropped > 0, dropped };
+}
+
+// POST /api/runs/:id/code — Action callback (Bearer CALLBACK_SECRET). Stores the guarded code.
+async function handleStoreCode(request, env, runId) {
+  const auth = request.headers.get("Authorization") || "";
+  if (!env.CALLBACK_SECRET || auth !== `Bearer ${env.CALLBACK_SECRET}`) {
+    return json({ error: "unauthorized" }, 401);
+  }
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400);
+  }
+  const guarded = guardCode(body);
+  await env.RELAY_KV.put(codeKey(runId), JSON.stringify(guarded), { expirationTtl: DAY_SECONDS });
+  return new Response(null, { status: 204 });
+}
+
+// GET /api/runs/:id/code — public (CORS). Fetched on demand when the user opens the viewer.
+async function handleGetCode(env, runId) {
+  const code = await env.RELAY_KV.get(codeKey(runId), "json");
+  if (!code) return json({ error: "not_found" }, 404, CORS);
+  return json(code, 200, CORS);
+}
+
 export async function handle(request, env) {
   const { pathname } = new URL(request.url);
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
@@ -184,6 +243,13 @@ export async function handle(request, env) {
   const progressMatch = pathname.match(/^\/api\/runs\/([^/]+)\/progress$/);
   if (progressMatch && request.method === "POST") {
     return handleProgress(request, env, progressMatch[1]);
+  }
+  const codeMatch = pathname.match(/^\/api\/runs\/([^/]+)\/code$/);
+  if (codeMatch && request.method === "POST") {
+    return handleStoreCode(request, env, codeMatch[1]);
+  }
+  if (codeMatch && request.method === "GET") {
+    return handleGetCode(env, codeMatch[1]);
   }
   const runMatch = pathname.match(/^\/api\/runs\/([^/]+)$/);
   if (runMatch && request.method === "GET") {

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { CodeViewer } from "@/components/CodeViewer";
 import { RunProgress } from "@/components/RunProgress";
 import { StatusBadge } from "@/components/StatusBadge";
 import { ValidationReport } from "@/components/ValidationReport";
@@ -156,7 +157,12 @@ export default function Home() {
             </p>
           )}
 
-          {phase === "done" && snapshot.result && <ValidationReport result={snapshot.result} />}
+          {phase === "done" && snapshot.result && (
+            <>
+              <ValidationReport result={snapshot.result} />
+              {snapshot.status === "succeeded" && <CodeViewer runId={snapshot.runId} />}
+            </>
+          )}
         </section>
       )}
     </main>

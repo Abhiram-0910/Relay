@@ -113,6 +113,33 @@ class Reporter:
                 pass
             time.sleep(1)
 
+    def send_code(self, files: list[dict], retries: int = 2) -> None:
+        """POST the generated source to the Worker's code:{runId} store (size-guarded there)."""
+        if not self.live:
+            total = sum(len(f["content"]) for f in files)
+            print(f"[code] {len(files)} files, {total} bytes (local mode, not posted)")
+            return
+        url = f"{self.base.rstrip('/')}/api/runs/{self.run_id}/code"
+        for attempt in range(retries + 1):
+            try:
+                resp = requests.post(url, json={"files": files, "truncated": False},
+                                     headers={"Authorization": f"Bearer {self.secret}"}, timeout=15)
+                if resp.status_code < 500:
+                    return
+            except requests.RequestException:
+                pass
+            time.sleep(1)
+
+
+def _code_files(generated: list[dict]) -> list[dict]:
+    """Flatten generated endpoints into the code payload: models.py + client.py per endpoint."""
+    files: list[dict] = []
+    for item in generated:
+        endpoint = item["endpoint"]
+        files.append({"endpoint": endpoint, "name": "models.py", "content": item["models_code"]})
+        files.append({"endpoint": endpoint, "name": "client.py", "content": item["client_code"]})
+    return files
+
 
 def _resolve_base_url(spec: dict, path: str) -> str | None:
     servers = spec.get("servers") or []
@@ -203,6 +230,10 @@ def run(spec_url: str, reporter: Reporter | None = None) -> dict:
                    for it in items if it["status"] == "skipped"]
         rep.send("running", stage="generated",
                  progress={"generated": len(generated), "skipped": len(skipped)})
+
+        # Store the generated source (separate KV entry, fetched on demand) before the terminal
+        # result, so it's available the moment the frontend sees "succeeded".
+        rep.send_code(_code_files(generated))
 
         rep.send("running", stage="live_validating")
         verdicts = _live_validate(spec, generated)
