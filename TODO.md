@@ -6,9 +6,7 @@ Read this at the start of every session to know what to work on next.
 ---
 
 ## 🔴 Current Sprint (Do This Now)
-- [x] Backend: parse + validate an OpenAPI URL over SSE (`/api/parse-spec`)
-- [x] Backend: generate Python types + client for every operation with a JSON response, path/query params, JSON request bodies — live-verified against full Petstore spec (14/19 generated, 5/19 correctly skipped)
-- [ ] Backend: Docker sandbox runner — one `--rm`, network-restricted, capped container that executes the generated client against the live API. **Unblocked: Docker confirmed working natively in WSL (`docker run hello-world` succeeded).**
+- [ ] **Next up:** Backend: Docker sandbox runner — one `--rm`, network-restricted, resource/time-capped container that executes a generated client against the live API. Docker confirmed working natively in WSL (`docker run hello-world` succeeded) — unblocked.
 - [ ] Backend: Claude Haiku self-correction loop on sandbox failure, capped retries, escalate to Sonnet after repeated failures
 - [ ] Wire the above into one end-to-end job, tested against Open-Meteo
 - [ ] Merge per-endpoint client files into one cohesive client package (currently each endpoint is standalone) — natural to do alongside sandbox execution
