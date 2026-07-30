@@ -184,6 +184,79 @@ from the user, per run. No new long-lived secrets are needed for Step 1 itself.
 
 ---
 
+## Step 2 — Multi-provider LLM support — SCOPED 2026-07-30, NOT YET BUILT
+Extends BYOK from Gemini-only to five providers: **Gemini, OpenAI, Anthropic, Grok (xAI),
+OpenRouter**. Each is a real integration against its own live API — never a cosmetic label over one
+backend — but the honest wire-protocol count is **three, not five**: Grok and OpenRouter deliberately
+implement OpenAI's exact REST API, so OpenAI/Grok/OpenRouter share one adapter parameterized by
+`base_url`. Distinctness is preserved where it actually exists (Gemini vs. OpenAI-family vs.
+Anthropic — three genuinely different request/response/structured-output shapes).
+
+**Zero new dependencies.** OpenAI-family and Anthropic are plain JSON POSTs done with the
+already-present `requests`; Gemini keeps the already-installed `google-genai` SDK. No `openai`/
+`anthropic` SDKs added (project rule: no deps without asking — resolved: raw `requests`).
+
+**Three adapters** (all in `correct.py`, behind a `CORRECTORS[provider]` dispatch; each returns the
+existing `{models_py, client_py}` Patch dict, so `self_correct`'s ladder/resandbox loop is untouched):
+
+| Adapter | Providers | Auth | Request / response shape | Structured output |
+|---------|-----------|------|--------------------------|-------------------|
+| `gemini` | Gemini | `?key=` (SDK) | `contents`+`config`; `candidates[].content.parts[]` | native Pydantic `response_schema` + `response_mime_type=application/json` → `response.parsed` (unchanged from Step 1) |
+| `openai_compatible(base_url)` | OpenAI (`api.openai.com/v1`), Grok (`api.x.ai/v1`), OpenRouter (`openrouter.ai/api/v1`) | `Authorization: Bearer` | `messages[]` → `choices[0].message.content` (JSON string, `json.loads`) | `response_format={"type":"json_schema","json_schema":{name,schema,strict:true}}` |
+| `anthropic` | Anthropic | `x-api-key` + `anthropic-version: 2023-06-01` | `messages[]` + top-level `system` → `content[]` blocks | **tool-use**: one tool whose `input_schema` is the patch schema, `tool_choice` forces it, patch read from the `tool_use` block's `.input` (portable across all Claude models/versions — chosen over the newer per-model-gated native `structured_outputs`) |
+
+**No cross-model escalation under BYOK.** The Step 1 ladder `(flash, flash, pro)` is a Gemini
+*free-tier* escalation and stays that way only for the shared-key path. On BYOK it's the user's own
+account/billing, so a run uses the user's **one chosen model**, retried up to the cap — never
+silently escalated to a different (costlier) model on their key.
+
+**Model & provider plumbing (mostly already present):**
+- `byok:{runId}` KV record gains a `model` field (`{apiKey, provider, model, storedAt}`);
+  `storeByokKey` validates it. `provider` was already stored in Step 1.
+- `provider` is currently *fetched and discarded* (`run_with_optional_byok` unpacks `_provider`).
+  Step 2 stops discarding it and threads `(api_key, provider, model)` through
+  `provider_call` → `_live_validate` → `self_correct` → `CORRECTORS[provider]`.
+- `apiKey`/`provider`/`model` still never touch `workflow_dispatch` inputs — they ride the existing
+  delivery-once `byok-key` endpoint, so the public-Action-log guarantee from Step 1 is unchanged.
+
+**Live model-list fetch (never hardcoded lists):**
+- New Worker endpoint `POST /api/models {provider, apiKey}` → Worker calls that provider's own
+  list-models API with the user's key → returns a filtered list. **Worker-side, not browser-direct**:
+  Anthropic/OpenAI don't serve permissive CORS to browser origins, and the key already crosses the
+  browser→Worker HTTPS boundary for BYOK, so we reuse it rather than open a second one.
+- Key is **transient** here — used for the outbound fetch, never written to a `byok:{runId}` entry
+  (those are minted only at run-create). A 401 doubles as up-front key validation (feeds Step 3's
+  error taxonomy: reject a bad key *before* a run is spent).
+- List-models endpoints per provider:
+  - Gemini: `GET generativelanguage.googleapis.com/v1beta/models?key=` → `models[]`, filter to
+    those whose `supportedGenerationMethods` includes `generateContent`.
+  - OpenAI: `GET api.openai.com/v1/models` (Bearer) → `data[]{id}` — **no capability fields**, filter
+    chat-capable models by id heuristic / small curated allowlist.
+  - Anthropic: `GET api.anthropic.com/v1/models` (`x-api-key` + `anthropic-version`) → rich
+    `data[]{id, display_name, capabilities.structured_outputs, …}`.
+  - Grok: `GET api.x.ai/v1/models` (Bearer) → OpenAI-shaped `data[]`.
+  - OpenRouter: `GET openrouter.ai/api/v1/models` (Bearer; with the user's key reflects their
+    enabled/credit models) → `data[]{id, name, pricing, context_length}` (~400+, must filter).
+- **Cache** `models:{provider}` in KV, TTL ~1h (a model list is a per-provider public fact — cache
+  the provider dimension, not the key). Per-key variance (OpenRouter enabled-models, OpenAI tier) is
+  a documented ceiling: a listed-but-unusable model surfaces as a clean provider 4xx at run time,
+  which Step 3 handles anyway. List-models calls consume no token quota on any provider, so the
+  cache — not a rate limiter — is the throttle (the per-IP KV limiter can optionally gate the
+  endpoint as belt-and-suspenders).
+- The id-prefix/allowlist filter (OpenAI/Grok/OpenRouter only) is the one place a hardcoded model
+  reference remains — it *filters* a live-fetched list, it does not *replace* it. Do not let it drift
+  into a hardcoded model list, which the brief forbids.
+
+**Frontend (Step 1's BYOK input was never built — `createRun` still sends only `{specUrl}`):** the
+provider dropdown, key field, and a **live-populated** model dropdown (from `POST /api/models`) all
+land here, together with the deferred Step 1 `byokReceivedAt`/`byokDeletedAt` receipt.
+
+**Cost boundary (see AGENTS.md):** the shared `GEMINI_API_KEY` stays free-tier-only forever; BYOK
+running on a user's own paid OpenAI/Anthropic/Grok account is not a violation of the zero-cost rule —
+it is the entire point of BYOK. Spend is the user's, on the user's key.
+
+---
+
 ## Key Files
 | File | Purpose |
 |------|---------|

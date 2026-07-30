@@ -203,6 +203,8 @@ Claude reads this at the START of every new session to understand what happened 
 
 **Watch-item (not blocking):** `BYOK_TTL_SECONDS = 120`. Both live runs reached the key-fetch ~34s after storage (sandbox images built in ~10s), well inside budget — but a genuinely cold `make sandbox-build` could approach the 120s ceiling and silently fall back to the shared key. Bump the TTL if a real cold build ever exceeds it.
 
-**Next:** Step 2 (multi-provider) — now safe to build on a proven key-handling layer.
+**Cost-rule clarification (logged 2026-07-30, scoping Step 2):** the shared `GEMINI_API_KEY` stays free-tier-only forever — never attach billing. BYOK explicitly means the user's OWN provider account/billing (OpenAI/Anthropic/Grok/OpenRouter/their own Gemini key); a user spending on their own key is NOT a violation of this project's zero-cost rule — it is the point of the BYOK feature. The zero-cost constraint governs the shared key only.
+
+**Next:** Step 2 (multi-provider) — spec written into ARCHITECTURE.md ("Step 2 — Multi-provider LLM support" section, 2026-07-30): 3 wire-protocol adapters for 5 providers (Gemini / OpenAI-family / Anthropic-tool-use), raw `requests` (zero new deps), no cross-model escalation on BYOK, live model-list fetch via a new Worker `POST /api/models` with a per-provider 1h KV cache. Now safe to build on a proven key-handling layer.
 
 <!-- Copy the block above for each new session -->
