@@ -30,6 +30,7 @@ import requests
 from openapi_spec_validator import validate as validate_spec
 from prance import ResolvingParser
 
+from app.byok import run_with_optional_byok
 from app.correct import self_correct
 from app.generate import generate_all_endpoints
 from app.sandbox import STATUS_PASS, SSRFError, resolve_and_validate_host, run_in_sandbox
@@ -169,9 +170,12 @@ def _required_kwargs(spec: dict, path: str, method: str) -> dict | None:
     return kwargs
 
 
-def _live_validate(spec: dict, generated: list[dict]) -> list[dict]:
+def _live_validate(spec: dict, generated: list[dict], api_key: str | None = None) -> list[dict]:
     """Sandbox-validate each idempotent GET endpoint, self-correcting on failure. Returns a
-    per-endpoint verdict list (never the generated code itself — keep the KV result small)."""
+    per-endpoint verdict list (never the generated code itself — keep the KV result small).
+
+    `api_key`, when set (BYOK), overrides the shared GEMINI_API_KEY for every self-correction on
+    this pass — fetched once upstream and threaded through, since the key is delivery-once."""
     verdicts: list[dict] = []
     for item in generated:
         endpoint = item["endpoint"]
@@ -199,7 +203,7 @@ def _live_validate(spec: dict, generated: list[dict]) -> list[dict]:
             report = run_in_sandbox(pkg, call_spec)
             attempts: list[dict] = []
             if report["status"] != STATUS_PASS:
-                result = self_correct(pkg, call_spec, report)
+                result = self_correct(pkg, call_spec, report, api_key=api_key)
                 report = result.final_report
                 attempts = [a.__dict__ for a in result.attempts]
 
@@ -236,7 +240,16 @@ def run(spec_url: str, reporter: Reporter | None = None) -> dict:
         rep.send_code(_code_files(generated))
 
         rep.send("running", stage="live_validating")
-        verdicts = _live_validate(spec, generated)
+        # BYOK: if the Worker stored a user key for this run, fetch it once (delivery-once) and
+        # thread it through this validation pass; otherwise self-correction uses the shared key.
+        has_byok = os.environ.get("RELAY_HAS_BYOK") == "true"
+        verdicts = run_with_optional_byok(
+            callback_url=os.environ.get("RELAY_CALLBACK_URL"),
+            run_id=os.environ.get("RELAY_RUN_ID"),
+            callback_secret=os.environ.get("RELAY_CALLBACK_SECRET"),
+            has_byok=has_byok,
+            provider_call=lambda api_key: _live_validate(spec, generated, api_key=api_key),
+        )
 
         # A run fails if any endpoint that was actually live-called ended up not passing.
         live_called = [v for v in verdicts if v["status"] != "generated_only"]

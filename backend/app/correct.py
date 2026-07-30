@@ -84,9 +84,10 @@ def _apply_patch(pkg_dir: Path, patch: Patch, models_code: str, client_code: str
 
 
 def gemini_corrector(model_id: str, call_spec: dict, report: dict,
-                     models_code: str, client_code: str) -> Patch:
-    """Ask Gemini (free tier) for corrected file contents. Imported lazily so the loop's logic
-    stays testable without the SDK or an API key present."""
+                     models_code: str, client_code: str, *, api_key: str | None = None) -> Patch:
+    """Ask Gemini for corrected file contents. Imported lazily so the loop's logic stays testable
+    without the SDK or an API key present. `api_key`, when set, is the user's BYOK key and is used
+    for this call instead of the shared GEMINI_API_KEY env var; it is never logged or persisted."""
     from google import genai
     from google.genai import types
     from pydantic import BaseModel
@@ -104,7 +105,8 @@ def gemini_corrector(model_id: str, call_spec: dict, report: dict,
         f"=== {_CLIENT_FILE} ===\n{client_code}\n"
     )
 
-    client = genai.Client()  # reads GEMINI_API_KEY from the environment
+    # BYOK key overrides the shared env key for this call only; else fall back to GEMINI_API_KEY.
+    client = genai.Client(api_key=api_key) if api_key else genai.Client()
     response = client.models.generate_content(
         model=model_id,
         contents=prompt,
@@ -130,10 +132,14 @@ def self_correct(
     run_sandbox: Callable[..., dict] = run_in_sandbox,
     corrector: Corrector = gemini_corrector,
     ladder: tuple[str, ...] = DEFAULT_LADDER,
+    api_key: str | None = None,
 ) -> CorrectionResult:
     """Iteratively patch the client and re-run it through the full sandbox until it passes or the
     capped ladder is exhausted. `failing_report` is the sandbox report from the pre-correction run.
-    """
+
+    `api_key`, when set (BYOK), is passed to the corrector to use in place of the shared
+    GEMINI_API_KEY. It's only forwarded when non-None, so custom correctors that don't accept the
+    keyword keep working unchanged."""
     assert failing_report["status"] != STATUS_PASS, "self_correct called on an already-passing run"
 
     report = failing_report
@@ -148,7 +154,9 @@ def self_correct(
         status_before = report["status"]
 
         try:
-            patch = corrector(model_id, call_spec, report, models_code, client_code)
+            patch = (corrector(model_id, call_spec, report, models_code, client_code, api_key=api_key)
+                     if api_key is not None
+                     else corrector(model_id, call_spec, report, models_code, client_code))
         except Exception as exc:  # quota/network/parse — stop, don't burn more of the ladder
             attempts.append(Attempt(model_id, status_before, [], "corrector_error", str(exc)[:300]))
             break

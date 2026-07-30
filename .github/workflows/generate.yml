@@ -15,6 +15,10 @@ on:
       callback_url:
         description: "Worker base URL for progress callbacks"
         required: true
+      has_byok:
+        description: "Whether a BYOK key was stored for this run (\"true\"/\"false\"). Carries no key material — just a flag telling the runner to fetch one."
+        required: false
+        default: "false"
 
 jobs:
   generate:
@@ -40,6 +44,7 @@ jobs:
           RELAY_RUN_ID: ${{ inputs.run_id }}
           RELAY_SPEC_URL: ${{ inputs.spec_url }}
           RELAY_CALLBACK_URL: ${{ inputs.callback_url }}
+          RELAY_HAS_BYOK: ${{ inputs.has_byok }}
           # Shared secret authenticates callbacks to the Worker — NOT the built-in GITHUB_TOKEN.
           RELAY_CALLBACK_SECRET: ${{ secrets.CALLBACK_SECRET }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}

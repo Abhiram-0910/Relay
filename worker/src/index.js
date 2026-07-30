@@ -15,6 +15,8 @@
  *   (the Action's built-in GITHUB_TOKEN is NOT used here — wrong audience.)
  */
 
+import { storeByokKey, buildDispatchInputs, handleByokKeyFetch } from "./byok.js";
+
 const DAY_SECONDS = 86400;
 const PROGRESS_THROTTLE_MS = 1000; // KV allows 1 write/sec per key; coalesce faster updates
 const TERMINAL = new Set(["succeeded", "failed"]);
@@ -119,11 +121,19 @@ async function handleCreateRun(request, env) {
   );
 
   const callbackUrl = new URL(request.url).origin; // this Worker's own public origin
-  const resp = await triggerWorkflow(env, {
-    run_id: runId,
-    spec_url: payload.specUrl,
-    callback_url: callbackUrl,
-  });
+
+  // Store an optional BYOK key in KV (single-use ticket, short TTL) BEFORE dispatch, then build
+  // the dispatch inputs via buildDispatchInputs — which has no apiKey parameter, so the key is
+  // structurally incapable of riding along into GitHub's workflow_dispatch payload.
+  let hasByok;
+  try {
+    hasByok = await storeByokKey(env, runId, payload.apiKey, payload.provider);
+  } catch {
+    await refundRateLimit(env, rl); // malformed key -> don't consume the user's daily quota
+    return json({ error: "invalid_api_key" }, 400, CORS);
+  }
+
+  const resp = await triggerWorkflow(env, buildDispatchInputs(runId, payload.specUrl, callbackUrl, hasByok));
   if (!resp.ok) {
     await refundRateLimit(env, rl); // dispatch failed -> don't consume the user's daily quota
     const detail = await resp.text().catch(() => "");
@@ -250,6 +260,10 @@ export async function handle(request, env) {
   }
   if (codeMatch && request.method === "GET") {
     return handleGetCode(env, codeMatch[1]);
+  }
+  const byokMatch = pathname.match(/^\/api\/runs\/([^/]+)\/byok-key$/);
+  if (byokMatch && request.method === "GET") {
+    return handleByokKeyFetch(request, env, byokMatch[1]); // Action-only (Bearer CALLBACK_SECRET)
   }
   const runMatch = pathname.match(/^\/api\/runs\/([^/]+)$/);
   if (runMatch && request.method === "GET") {
