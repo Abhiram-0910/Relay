@@ -124,23 +124,63 @@ def gemini_corrector(model_id: str, call_spec: dict, report: dict,
     return json.loads(response.text)
 
 
+# Provider dispatch (Step 2 scaffolding). Only Gemini is wired today; the OpenAI-family and
+# Anthropic adapters land next, each registered under its own key(s) with the SAME
+# (model_id, call_spec, report, models_code, client_code, *, api_key) contract so `self_correct`
+# stays provider-agnostic. OpenAI/Grok/OpenRouter will share one openai_compatible(base_url)
+# adapter; Anthropic gets its own (tool-use structured output). See ARCHITECTURE.md "Step 2".
+CORRECTORS: dict[str, Corrector] = {"gemini": gemini_corrector}
+
+
+def _resolve_corrector(provider: str | None) -> Corrector:
+    """Pick the adapter for `provider` (defaults to Gemini). Raises for a provider whose adapter
+    hasn't been built yet, so an unwired provider fails loudly instead of silently using Gemini."""
+    key = provider or "gemini"
+    try:
+        return CORRECTORS[key]
+    except KeyError:
+        raise NotImplementedError(f"no corrector adapter for provider {key!r} yet") from None
+
+
+# BYOK runs on the user's OWN account, so there's no free-tier quota to protect and no reason to
+# escalate to a costlier model on their key: use their one chosen model, retried up to the cap.
+# The shared-key path keeps DEFAULT_LADDER's flash→flash→pro escalation. Same attempt budget both
+# ways so the cap that protects free-tier quota also bounds a BYOK run's spend.
+_BYOK_MAX_ATTEMPTS = len(DEFAULT_LADDER)
+
+
+def _ladder_for(model: str | None) -> tuple[str, ...]:
+    """BYOK (a chosen model) → that one model retried up to the cap, never cross-model escalation.
+    No model (shared key) → the flash→flash→pro escalation ladder."""
+    return (model,) * _BYOK_MAX_ATTEMPTS if model else DEFAULT_LADDER
+
+
 def self_correct(
     pkg_dir: Path,
     call_spec: dict,
     failing_report: dict,
     *,
     run_sandbox: Callable[..., dict] = run_in_sandbox,
-    corrector: Corrector = gemini_corrector,
-    ladder: tuple[str, ...] = DEFAULT_LADDER,
+    corrector: Corrector | None = None,
+    ladder: tuple[str, ...] | None = None,
     api_key: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
 ) -> CorrectionResult:
     """Iteratively patch the client and re-run it through the full sandbox until it passes or the
     capped ladder is exhausted. `failing_report` is the sandbox report from the pre-correction run.
 
     `api_key`, when set (BYOK), is passed to the corrector to use in place of the shared
     GEMINI_API_KEY. It's only forwarded when non-None, so custom correctors that don't accept the
-    keyword keep working unchanged."""
+    keyword keep working unchanged.
+
+    `provider` picks the adapter (defaults to Gemini). `model`, when set (BYOK), pins the ladder to
+    that single model retried up to the cap — no cross-model escalation on the user's own key. An
+    explicit `corrector`/`ladder` (used by the hermetic tests) overrides that resolution."""
     assert failing_report["status"] != STATUS_PASS, "self_correct called on an already-passing run"
+
+    corrector = corrector or _resolve_corrector(provider)
+    ladder = ladder if ladder is not None else _ladder_for(model)
 
     report = failing_report
     attempts: list[Attempt] = []

@@ -37,16 +37,22 @@ const BYOK_TTL_SECONDS = 240; // KV minimum is 60s. Was 120s, but a genuinely
  * @returns {Promise<boolean>} true if a key was stored — caller should pass
  *   this into buildDispatchInputs() as `hasByok`.
  */
-export async function storeByokKey(env, runId, apiKey, provider) {
+export async function storeByokKey(env, runId, apiKey, provider, model) {
   if (!apiKey) return false;
   if (typeof apiKey !== "string" || apiKey.length < 8 || apiKey.length > 512) {
     // Fail closed on malformed input rather than storing garbage a later
     // step would have to guess about.
     throw new Error("invalid apiKey");
   }
+  if (model != null && (typeof model !== "string" || model.length < 1 || model.length > 256)) {
+    // Model id is optional (shared-key/Gemini-default runs omit it), but if
+    // present it must be a sane string — same fail-closed stance as apiKey.
+    throw new Error("invalid model");
+  }
   const record = {
     apiKey,
     provider: provider || "unknown",
+    model: model || null,
     storedAt: new Date().toISOString(),
   };
   await env.RELAY_KV.put(`byok:${runId}`, JSON.stringify(record), {
@@ -98,7 +104,7 @@ export async function handleByokKeyFetch(request, env, runId) {
   // as "no BYOK key, use the shared free tier," not as something to retry.
   await env.RELAY_KV.delete(`byok:${runId}`);
 
-  const { apiKey, provider, storedAt } = JSON.parse(raw);
+  const { apiKey, provider, model, storedAt } = JSON.parse(raw);
   const deliveredAt = new Date().toISOString();
 
   // Stamp the existing run record with the honest proof pair. This reuses
@@ -113,7 +119,7 @@ export async function handleByokKeyFetch(request, env, runId) {
     await env.RELAY_KV.put(`run:${runId}`, JSON.stringify(run));
   }
 
-  return new Response(JSON.stringify({ apiKey, provider, deliveredAt }), {
+  return new Response(JSON.stringify({ apiKey, provider, model: model ?? null, deliveredAt }), {
     status: 200,
     headers: { "Content-Type": "application/json" },
   });

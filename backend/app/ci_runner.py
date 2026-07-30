@@ -170,12 +170,15 @@ def _required_kwargs(spec: dict, path: str, method: str) -> dict | None:
     return kwargs
 
 
-def _live_validate(spec: dict, generated: list[dict], api_key: str | None = None) -> list[dict]:
+def _live_validate(spec: dict, generated: list[dict], api_key: str | None = None,
+                   provider: str | None = None, model: str | None = None) -> list[dict]:
     """Sandbox-validate each idempotent GET endpoint, self-correcting on failure. Returns a
     per-endpoint verdict list (never the generated code itself — keep the KV result small).
 
     `api_key`, when set (BYOK), overrides the shared GEMINI_API_KEY for every self-correction on
-    this pass — fetched once upstream and threaded through, since the key is delivery-once."""
+    this pass — fetched once upstream and threaded through, since the key is delivery-once.
+    `provider`/`model` (BYOK) pick the corrector adapter and pin the model (no cross-model
+    escalation on the user's key); both None → shared-key Gemini flash→pro path."""
     verdicts: list[dict] = []
     for item in generated:
         endpoint = item["endpoint"]
@@ -203,7 +206,8 @@ def _live_validate(spec: dict, generated: list[dict], api_key: str | None = None
             report = run_in_sandbox(pkg, call_spec)
             attempts: list[dict] = []
             if report["status"] != STATUS_PASS:
-                result = self_correct(pkg, call_spec, report, api_key=api_key)
+                result = self_correct(pkg, call_spec, report, api_key=api_key,
+                                      provider=provider, model=model)
                 report = result.final_report
                 attempts = [a.__dict__ for a in result.attempts]
 
@@ -248,7 +252,8 @@ def run(spec_url: str, reporter: Reporter | None = None) -> dict:
             run_id=os.environ.get("RELAY_RUN_ID"),
             callback_secret=os.environ.get("RELAY_CALLBACK_SECRET"),
             has_byok=has_byok,
-            provider_call=lambda api_key: _live_validate(spec, generated, api_key=api_key),
+            provider_call=lambda api_key, provider, model: _live_validate(
+                spec, generated, api_key=api_key, provider=provider, model=model),
         )
 
         # A run fails if any endpoint that was actually live-called ended up not passing.

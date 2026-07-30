@@ -127,9 +127,9 @@ async function handleCreateRun(request, env) {
   // structurally incapable of riding along into GitHub's workflow_dispatch payload.
   let hasByok;
   try {
-    hasByok = await storeByokKey(env, runId, payload.apiKey, payload.provider);
+    hasByok = await storeByokKey(env, runId, payload.apiKey, payload.provider, payload.model);
   } catch {
-    await refundRateLimit(env, rl); // malformed key -> don't consume the user's daily quota
+    await refundRateLimit(env, rl); // malformed key/model -> don't consume the user's daily quota
     return json({ error: "invalid_api_key" }, 400, CORS);
   }
 

@@ -112,6 +112,41 @@ def test_refuses_to_correct_a_passing_run(tmp_path: Path) -> None:
         self_correct(pkg, {}, _report(sandbox.STATUS_PASS))
 
 
+def test_byok_pins_single_model_no_cross_model_escalation(tmp_path: Path) -> None:
+    """BYOK (a chosen model) retries that ONE model up to the cap — never the shared-key
+    flash→flash→pro escalation, which would spend the user's key on a costlier model."""
+    pkg = _make_pkg(tmp_path)
+    models_used: list[str] = []
+
+    def never_fix_corrector(model_id, call_spec, report, models_code, client_code, *, api_key=None):
+        models_used.append(model_id)
+        return {"models_py": f"# {model_id}\n", "client_py": client_code}
+
+    def always_fail_sandbox(pkg_dir, call_spec):
+        return _report(sandbox.STATUS_CALL_FAILED)
+
+    result = self_correct(
+        pkg, {"base_url": OPEN_METEO_BASE_URL},
+        _report(sandbox.STATUS_CALL_FAILED),
+        run_sandbox=always_fail_sandbox, corrector=never_fix_corrector,
+        api_key="sk-user", model="user-chosen-model",
+    )
+
+    assert not result.succeeded
+    # Same attempt budget as the shared ladder, but all on the one chosen model.
+    assert models_used == ["user-chosen-model"] * len(correct.DEFAULT_LADDER)
+    assert correct.GEMINI_FLASH not in models_used and correct.GEMINI_PRO not in models_used
+
+
+def test_provider_dispatch_resolves_gemini_and_rejects_unwired() -> None:
+    """Scaffolding: Gemini is wired; an unbuilt provider fails loudly rather than silently
+    falling back to Gemini."""
+    assert correct._resolve_corrector("gemini") is correct.gemini_corrector
+    assert correct._resolve_corrector(None) is correct.gemini_corrector  # default
+    with pytest.raises(NotImplementedError):
+        correct._resolve_corrector("openai")
+
+
 # --- live: real Gemini fixes a real broken client through the real sandbox ----------------------
 
 def _live_ready() -> bool:

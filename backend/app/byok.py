@@ -21,7 +21,8 @@
 #             run_id=os.environ["RELAY_RUN_ID"],
 #             callback_secret=os.environ["RELAY_CALLBACK_SECRET"],
 #             has_byok=has_byok,
-#             provider_call=lambda api_key: self_correct(..., api_key=api_key),
+#             provider_call=lambda api_key, provider, model: self_correct(
+#                 ..., api_key=api_key, provider=provider, model=model),
 #         )
 #      self_correct (Task 9) needs a new optional api_key param: if given,
 #      call the user's provider with it instead of the shared GEMINI_API_KEY;
@@ -46,8 +47,10 @@ def fetch_byok_key(callback_url: str, run_id: str, callback_secret: str, timeout
     Fetch the user's BYOK key exactly once via the Worker's authenticated,
     delivery-once endpoint.
 
-    Returns (api_key, provider) on success, or (None, None) if no key was
-    ever stored for this run — a legitimate, common outcome, not an error.
+    Returns (api_key, provider, model) on success, or (None, None, None) if no
+    key was ever stored for this run — a legitimate, common outcome, not an
+    error. `model` is None for records stored without an explicit model (e.g.
+    shared-key/Gemini-default runs).
 
     Raises ByokFetchError on auth/network failure so the caller can decide to
     fall back rather than let the whole run crash over a key-fetch hiccup.
@@ -60,28 +63,32 @@ def fetch_byok_key(callback_url: str, run_id: str, callback_secret: str, timeout
         raise ByokFetchError("byok-key fetch failed: network error") from e
 
     if resp.status_code == 404:
-        return None, None
+        return None, None, None
     if resp.status_code == 401:
         raise ByokFetchError("byok-key fetch failed: unauthorized (bad CALLBACK_SECRET)")
     if resp.status_code != 200:
         raise ByokFetchError(f"byok-key fetch failed: unexpected status {resp.status_code}")
 
     body = resp.json()
-    return body.get("apiKey"), body.get("provider")
+    return body.get("apiKey"), body.get("provider"), body.get("model")
 
 
 def run_with_optional_byok(callback_url, run_id, callback_secret, has_byok, provider_call):
     """
     Wraps a provider call (e.g. Task 9's self_correct step) with the BYOK
-    fetch. `provider_call` is a callable taking (api_key_or_none) and
-    returning whatever the pipeline step normally returns. Scopes the key to
-    this call: it's a local variable here and in provider_call's own frame,
-    never assigned anywhere longer-lived.
+    fetch. `provider_call` is a callable taking (api_key, provider, model) —
+    all None when there's no BYOK key — and returning whatever the pipeline
+    step normally returns. Scopes the key to this call: it's a local variable
+    here and in provider_call's own frame, never assigned anywhere
+    longer-lived. `provider`/`model` select the adapter and pin the model for
+    the correction step (Step 2 multi-provider).
     """
     api_key = None
+    provider = None
+    model = None
     if has_byok:
         try:
-            api_key, _provider = fetch_byok_key(callback_url, run_id, callback_secret)
+            api_key, provider, model = fetch_byok_key(callback_url, run_id, callback_secret)
         except ByokFetchError as e:
             # Log the fact of the fallback, never request/response detail
             # that could carry a token.
@@ -90,7 +97,7 @@ def run_with_optional_byok(callback_url, run_id, callback_secret, has_byok, prov
             api_key = None
 
     try:
-        return provider_call(api_key)
+        return provider_call(api_key, provider, model)
     finally:
         # Best-effort scope hygiene — Python can't guarantee a string is
         # zeroed in memory without a native extension, and that's not worth
