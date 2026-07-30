@@ -126,6 +126,64 @@ per key); the Worker enforces the throttle so a buggy reporter can't blow the bu
 
 ---
 
+## BYOK (bring-your-own-key) security design — SCOPED 2026-07-26, NOT YET BUILT
+Lets a user supply their own LLM provider key so their runs use their quota instead of the shared
+free-tier `GEMINI_API_KEY`. **Hard constraint driving this whole design:** the repo is public, so a
+key must never be passed as a `workflow_dispatch` input — those are visible, unmasked, in public
+Action run logs. GitHub's log masking only redacts values registered ahead of time as real repo
+secrets; it can't know an arbitrary runtime input is sensitive. The key must never enter GitHub's
+system at all.
+
+**Flow (extends the existing trigger/callback pattern, doesn't replace it):**
+```
+Browser ─POST /api/runs {specUrl, apiKey?, provider?}─► Worker
+                                     1–3. same as today (validate, rate-limit, mint runId)
+                                     3a. if apiKey present: KV put byok:{runId}={apiKey,provider,
+                                         storedAt}, expirationTtl=120s — BEFORE dispatch
+                                     4. workflow_dispatch inputs{run_id, spec_url, callback_url,
+                                        has_byok: "true"|"false"}  ← apiKey NEVER enters this object
+                                     5. 202 {runId, statusUrl}
+GitHub Action: if has_byok=="true", ci_runner calls
+     GET {callback_url}/api/runs/{run_id}/byok-key  (Bearer CALLBACK_SECRET, same auth as progress)
+Worker: KV get byok:{runId} → if present, KV delete byok:{runId} (delivery-once, not just TTL) →
+     stamp run:{runId} with byokReceivedAt (=storedAt) and byokDeletedAt (=now) → 200 {apiKey,
+     provider}. Second call (or call after TTL expiry) → 404 — key is already gone either way.
+ci_runner: holds apiKey in a local variable only for the scope of the one LLM call, never logs it,
+     never writes it to disk; goes out of scope after. (Documented residual: Python can't guarantee
+     the string is zeroed in memory — not solvable without a native extension, not worth it here;
+     the delivery-once + short-TTL + never-on-disk design closes the vectors that matter — leaking
+     in a public log or a repo secret store.)
+Browser: already polls GET /api/runs/{runId} — once byokDeletedAt appears in the snapshot, render
+     the honest proof: "key received {byokReceivedAt}, used once, deleted {byokDeletedAt}." This is
+     a real fact read off the Worker's own KV state, not copy.
+```
+
+**KV schema addition:**
+| Key | Value | TTL |
+|-----|-------|-----|
+| `byok:{runId}` | `{apiKey, provider, storedAt}` | 120s, deleted on first read regardless of TTL |
+
+`run:{runId}` gains two optional fields once delivered: `byokReceivedAt`, `byokDeletedAt`. The
+`apiKey` value itself is never written into `run:{runId}` or any other longer-lived key — the only
+place it ever exists in KV is the short-TTL `byok:{runId}` entry, and only until first read.
+
+**New Worker endpoints:** none, strictly — `apiKey`/`provider` are optional fields on the existing
+`POST /api/runs` body, so the byok write happens inside the existing run-creation handler, before
+dispatch. One genuinely new endpoint: `GET /api/runs/:runId/byok-key` (Bearer `CALLBACK_SECRET`,
+same credential/pattern as `/api/runs/:id/progress`) — Action-only, delivery-once.
+
+**Test obligation before Step 2 (multi-provider) touches any of this:** a Worker test that mocks
+the GitHub dispatch `fetch` call and asserts `JSON.stringify(dispatchRequestBody)` does not contain
+the literal key value — i.e., proves structurally, not just by design intent, that the key can't
+end up in a public Action log. Plus: delivery-once (second `byok-key` GET returns 404), wrong/missing
+bearer on `byok-key` returns 401 and leaves the KV entry untouched, and `run:{runId}` never gains an
+`apiKey` field at any point in the flow.
+
+**Env vars (later, Step 2):** provider keys are never Worker/Action secrets under BYOK — they come
+from the user, per run. No new long-lived secrets are needed for Step 1 itself.
+
+---
+
 ## Key Files
 | File | Purpose |
 |------|---------|

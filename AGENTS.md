@@ -8,7 +8,9 @@ Claude reads this at the START of every new session to understand what happened 
 ## Project State
 **Last updated:** 2026-07-25
 **Current branch:** main
-**Overall status:** MVP is **complete and live-verified end-to-end, frontend included.** Vercel frontend (`https://relay-cyan-rho.vercel.app`) → Cloudflare Worker (`https://relay-worker.abhiram-dev.workers.dev`) → GitHub Actions → Docker sandbox → Gemini self-correction → KV, with per-IP rate limiting, run-id isolation, and a code viewer. A real browser run polls to `Succeeded` / `verified_pass` and shows the real generated client. Nothing in the project is claimed-but-unproven. Tests: backend 33 · worker 12 · frontend 7 hermetic, all green.
+**Overall status:** MVP is **complete and live-verified end-to-end, frontend included** (see Session 2 close, 2026-07-26). Vercel frontend (`https://relay-cyan-rho.vercel.app`) → Cloudflare Worker (`https://relay-worker.abhiram-dev.workers.dev`) → GitHub Actions → Docker sandbox → Gemini self-correction → KV, with per-IP rate limiting, run-id isolation, and a code viewer. A real browser run polls to `Succeeded` / `verified_pass` and shows the real generated client. Nothing in the MVP is claimed-but-unproven. Tests: backend 33 · worker 12 · frontend 7 hermetic, all green.
+
+**Phase 2 (scoped 2026-07-26, build starting Session 3, 2026-07-27) — NOT yet built:** BYOK security infrastructure → multi-provider LLM (Gemini/OpenAI/Anthropic/Grok/OpenRouter) → honest error taxonomy → full QA re-verification → visual/UX pass → `/security-review` + remediation → final retest and deliver. See Session 3 log below for the design and TODO.md's Current Sprint for the live task breakdown. Nothing in Phase 2 is claimed-but-unproven either — treat it as fully unbuilt until each step has its own live receipt, same discipline as Phase 1.
 
 ---
 
@@ -171,5 +173,36 @@ Claude reads this at the START of every new session to understand what happened 
 **✅ CLOSED — 2026-07-26 — Task 13 fully proven live.** Real end-to-end run driven in a real browser against the Vercel frontend (`https://relay-cyan-rho.vercel.app`) → deployed Worker → real GitHub Action → real Docker sandbox: polled through `queued → fetching_spec → spec_validated → generated → live_validating → done` to a real `Succeeded` (`GET /v1/forecast` = `verified_pass`), then the code viewer fetched and displayed the REAL generated `models.py` — 9 nested classes (`Hourly`/`HourlyUnits`/`Daily`/`Current`/…), live `datamodel-codegen` timestamp — NOT the mock's canned 6-field version. Screenshot captured. (Required first: pushing both Task 13 commits to `origin/main` and `wrangler deploy` of the Worker — the initial live attempt hit a stale deploy: the code endpoints returned 404 and stored nothing because the Worker/Action were pre-Task-13. Verified the redeploy via a `POST …/code → 401` probe before re-running.) The mock-driven screenshots from before were faithful to the real shapes; this run confirms them against real infrastructure. Nothing in the project is now claimed-but-unproven.
 
 ---
+
+### Session 3 — 2026-07-27
+**Goal:** Close the doc gap flagged at the end of Session 2 (Phase 2 was scoped verbally — BYOK, multi-provider LLM, error taxonomy, QA, visual pass, security review — but never written into AGENTS.md/ARCHITECTURE.md/TODO.md), then start Step 1 (BYOK) — the only step where a mistake harms real users, not just the demo.
+
+**Context carried in from the previous session (hit context limit before Abhi could confirm the sequencing):** Claude had identified that the naive BYOK implementation — passing a user's API key as a `workflow_dispatch` input — would leak it in public Action logs (this is a public repo; GitHub's log masking only redacts pre-registered repo secrets, not arbitrary runtime inputs). Correct design agreed in principle: user key goes browser → Worker over HTTPS only, stored as `byok:{runId}` in KV with a short TTL, deleted the instant the Action's authenticated callback reads it (delivery-once), held in the runner's memory only for the one LLM call, never logged/written to disk, with a Worker-verifiable timestamp pair (`byokReceivedAt` / `byokDeletedAt`) surfaced honestly in the frontend instead of just claimed in copy.
+
+**Session 3 opened by:** re-reading AGENTS.md/ARCHITECTURE.md/TODO.md, then running `conversation_search` against this Claude Project for "Relay BYOK workflow_dispatch" to pull the actual prior-session transcript rather than trusting the pasted handoff prompt at face value — confirmed the handoff accurately reflects what was actually discussed (same design, same open confirmation question) rather than a distorted summary.
+
+**Docs updated this session (before any code):** AGENTS.md (this entry + status line), ARCHITECTURE.md (new "BYOK security design" section: KV schema, endpoint contracts, sequence, env vars), TODO.md (Phase 2 promoted into Current Sprint as Steps 1–7, old current-sprint items moved to Completed).
+
+**Constraint worth logging:** this session is running in the claude.ai chat interface, not Claude Code with direct repo access — no visibility into the actual current contents of `worker/src/index.js`, `ci_runner.py`, or the callback-auth code, only what ARCHITECTURE.md documents about their shape. Code for Step 1 is being written as new, additive, self-contained route handlers / functions with explicit integration notes rather than as a full-file diff against source Claude hasn't actually seen — to avoid guessing at existing structure, which would violate the project's zero-fake-data discipline. Whoever picks this up next (Claude Code session or Abhi) should paste the real current files back in if a precise merged diff is wanted, and must run the new Worker tests for real before marking Step 1 done — nothing here counts as verified until it has a live receipt, same as every other claim in this file.
+
+**Left incomplete:** Step 1 code has not been run against real Cloudflare/GitHub infrastructure from this session (can't be — no access to it here). Needs: wiring the new route handlers into the real `worker/src/index.js`, wiring `fetch_byok_key()` into the real `ci_runner.py`, running the new Vitest suite for real, then a live end-to-end BYOK test (a throwaway key, confirm it's deleted-on-read, confirm it never appears in a real Action run log) before Step 1 is called closed.
+
+---
+
+### Session 4 — 2026-07-30 — BYOK Step 1 CLOSED (proven live)
+**Goal:** Take Session 3's drafted-but-unwired BYOK files and actually merge, test, and live-prove them (Claude Code session, real repo access this time).
+
+**Done & committed (`23317fb`, pushed to `origin/main`):**
+- Moved the four drafted files into the real tree: `worker/src/byok.js`, `worker/test/byok.test.js`, `backend/app/byok.py`, `backend/tests/test_byok.py` (fixed its import `ci_runner_byok`→`app.byok`). `BYOK_STEP1_INTEGRATION.md` kept at root as reference.
+- Wired into `worker/src/index.js`: `storeByokKey` before dispatch (malformed key → 400 `invalid_api_key` + rate-limit refund), dispatch routed through `buildDispatchInputs`, new `GET /api/runs/:id/byok-key` (Action-only). **Leak-risk check the doc flagged:** the existing dispatch did NOT spread the body (explicit `{run_id,spec_url,callback_url}`, never read `apiKey`) — no pre-existing leak; routing through `buildDispatchInputs` (no `apiKey` param) keeps it structurally impossible.
+- Wired into `ci_runner.py`: `run_with_optional_byok` wraps the `_live_validate` pass (delivery-once fetch, threads `api_key` into `self_correct`). `correct.py`: `self_correct`/`gemini_corrector` take optional `api_key` → `genai.Client(api_key=...)`, forwarded only when non-None so hermetic test correctors are untouched. `generate.yml`: `has_byok` input → `RELAY_HAS_BYOK`.
+
+**Live receipt (deployed Worker + real Action, throwaway sentinel key):** run `805d0ccc` polled to `succeeded` with `byokReceivedAt=16:52:47Z` / `byokDeletedAt=16:53:21Z`; Action log `RELAY_HAS_BYOK: true`, **sentinel = 0 occurrences in the public Action log**, 0 in the polled run record (no `apiKey` field), post-run unauthenticated `byok-key` GET → 401. (Skipped the authenticated-404 sub-check by choice — no local `CALLBACK_SECRET`; `byokDeletedAt` + delivery-once already prove the delete.)
+
+**Gotcha logged (same as Task 13's stale-deploy trap):** the FIRST live attempt (`71e6bdc2`) came through with `RELAY_HAS_BYOK: false` and no stamp — a Cloudflare edge propagation race: the run was triggered seconds after `wrangler deploy`, so the edge still served the pre-BYOK Worker (old dispatch had no `has_byok` → GitHub applied the workflow default `"false"`). Fix: after deploying the Worker, probe the new route (`byok-key` → 401) to confirm propagation BEFORE triggering a run. Re-run then passed clean.
+
+**Watch-item (not blocking):** `BYOK_TTL_SECONDS = 120`. Both live runs reached the key-fetch ~34s after storage (sandbox images built in ~10s), well inside budget — but a genuinely cold `make sandbox-build` could approach the 120s ceiling and silently fall back to the shared key. Bump the TTL if a real cold build ever exceeds it.
+
+**Next:** Step 2 (multi-provider) — now safe to build on a proven key-handling layer.
 
 <!-- Copy the block above for each new session -->

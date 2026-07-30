@@ -5,23 +5,25 @@ Read this at the start of every session to know what to work on next.
 
 ---
 
-## 🔴 Current Sprint (Do This Now)
-- [x] Backend: Docker sandbox runner — one `--rm`, resource/time-capped, SSRF-guarded container that executes a generated client against the live API. **Done Session 2**: `verified_pass` live against Open-Meteo `/v1/forecast`.
-- [x] **Task 8.5: network isolation** — sandbox on a per-run `--internal` net, egress only via a socat sidecar pinned to the single validated IP:port. **Done Session 2**: live-verified — Open-Meteo still `verified_pass`, a hardcoded call to a different public IP (1.1.1.1) fails unreachable. Untrusted LLM code is now safe to run here.
-- [x] **Task 9: Gemini Flash self-correction loop** — capped 2 Flash → 1 Pro → hard fail, every attempt re-run through the full sandbox. **Done Session 2**: live-verified — a deliberately-broken Open-Meteo response model (`verified_live_validation_failed`) fixed by `gemini-3.5-flash` on attempt #1 → `verified_pass`.
-- [x] **End-to-end pipeline runner** (`ci_runner.py`): parse→generate→sandbox→self-correct in one job. **Done Session 2**: live `succeeded` / forecast `verified_pass` against Open-Meteo.
-- [x] **Hosting pivot**: Cloudflare Worker (trigger + KV state + KV per-IP rate limit) + GitHub Actions workflow invoking `ci_runner`. **Done Session 2**: 9 worker unit tests (rate-limit-before-dispatch, run-id isolation, callback auth, write throttle) + ci_runner live-verified.
-- [x] SSRF guard on the spec-fetch/`$ref` step in `ci_runner` — **Done Session 2**: pre-fetch host validation + `guarded_prance_resolve` gating prance's fetch choke point (blocks private hosts + `file`/`python` schemes); 3 default-suite tests. Open-Meteo still `verified_pass` through the guard.
-- [x] **Provision + deploy** — **Done Session 2, LIVE-VERIFIED.** Worker at `https://relay-worker.abhiram-dev.workers.dev`; `scripts/verify_deployed.sh` → **ALL CHECKS PASSED**: two concurrent runs isolated + both `verified_pass` on live Open-Meteo, rate limiter `429`'d request #4. Deploy fixes: default branch master→main, added git remote + pushed, re-scoped token with `workflow` scope.
-- [x] **Task 13: frontend** (Next.js 14 + Tailwind, dark OLED). Loop (paste→trigger→poll→report) + code viewer (on-demand `GET /api/runs/:id/code`, syntax-highlighted, download, honest truncation banner). Status→color SSOT. Worker gained `code:{runId}` store (size-guarded) + endpoints. Tests: frontend 7, worker 12, backend 33. **Done (this session) — but see the OPEN item below.**
-- [x] **Task 13 fully proven LIVE — 2026-07-26.** Real browser run on the Vercel frontend → deployed Worker → real Action/Docker/sandbox: polled to real `Succeeded` / `verified_pass`, and the code viewer showed the REAL generated `models.py` (9 nested Open-Meteo classes, live codegen timestamp), not the mock. Screenshot captured. Frontend deployed to Vercel; Worker redeployed with the Task 13 code endpoints. **No claimed-but-unproven work remains in the project.**
-- [ ] Merge per-endpoint client files into one cohesive client package (currently each endpoint is standalone).
+## 🔴 Current Sprint (Do This Now) — Phase 2: BYOK → multi-provider → hardening
+MVP (everything below in ✅ Completed) is done and live-verified. This sprint is the phase scoped
+verbally at the end of Session 2 (2026-07-26), now written up properly — see AGENTS.md Session 3
+and ARCHITECTURE.md's "BYOK security design" section for the full spec. Nothing here is built yet;
+each step gets its own live receipt before it's checked off, same discipline as Phase 1.
+
+- [x] **Step 1 — BYOK security infrastructure (CLOSED, Session 4, `23317fb`).** Ephemeral `byok:{runId}` KV entry, delivery-once via authenticated callback, key never enters `workflow_dispatch` inputs (structurally — `buildDispatchInputs` has no `apiKey` param), honest `byokReceivedAt`/`byokDeletedAt` surfaced on the run record. Wired into real `worker/src/index.js` + `ci_runner.py`/`correct.py`; suites green (worker 21, backend 40). Live-proven with a throwaway sentinel key: `byokDeletedAt` stamped, **sentinel absent from the public Action log**, unauth `byok-key` → 401. Frontend still needs to render the `byokReceivedAt`/`byokDeletedAt` receipt (data is live on the run object — small, do at Step 2 UI pass). Watch-item: 120s KV TTL headroom vs. a cold sandbox build.
+- [ ] **Step 2 — Multi-provider LLM support**: Gemini, OpenAI, Anthropic, Grok, OpenRouter. Each a real distinct integration (own request/response shape, own structured-output mechanism), not cosmetic options over one backend. Model lists fetched live from each provider's own list-models API using the user's key — never hardcoded.
+- [ ] **Step 3 — Honest error taxonomy**: plain-language mapping for every real failure mode (rate limit w/ exact reset time, provider auth failure, sandbox timeout, SSRF block, quota exhausted, network error), each consistently offering the "use your own key" path, never a raw technical error surfaced to the end user.
+- [ ] **Step 4 — Full QA pass**: extend backend/worker/frontend suites to the new surface area, then a real live end-to-end re-verification with a receipt — same standard as every prior claim in this project.
+- [ ] **Step 5 — Visual/UX pass**: `frontend-design` + `ui-ux-pro-max` skills + Magic MCP, after the logic is solid, not before.
+- [ ] **Step 6 — Security review**: `/security-review`, plus the Claude Security plugin's deeper "Scan codebase" if available; fix everything found.
+- [ ] **Step 7 — Final full retest, then push and deliver.**
+- [ ] Merge per-endpoint client files into one cohesive client package (currently each endpoint is standalone) — deferred from Phase 1, not urgent.
 
 ---
 
 ## 🟡 Up Next (After Current Sprint)
 - [ ] TypeScript client generation (openapi-typescript)
-- [ ] Task 13 — Frontend: Next.js + Tailwind on Vercel, built against the deployed Worker API (paste URL → poll progress)
 - [ ] General required-param synthesis (retire the Open-Meteo demo-param hook)
 - [ ] Prism mock fallback for endpoints unsafe to call live
 
@@ -35,6 +37,12 @@ Read this at the start of every session to know what to work on next.
 ---
 
 ## ✅ Completed
+- [x] Task 13 fully proven live: real browser run, Vercel frontend → deployed Worker → real Action/Docker/sandbox, polled to real `Succeeded`/`verified_pass`, code viewer showed the real generated `models.py`, not a mock. No claimed-but-unproven work remained in Phase 1 as of this — Session 2 close, 2026-07-26
+- [x] Task 13 frontend (Next.js 14 + Tailwind): trigger/poll/report loop + on-demand code viewer (syntax-highlighted, download, honest truncation banner), status→color SSOT. Worker gained `code:{runId}` store + endpoints. Tests: frontend 7, worker 12, backend 33 — Session 2, 2026-07-25/26
+- [x] Provision + deploy, live-verified: Worker at `https://relay-worker.abhiram-dev.workers.dev`; `scripts/verify_deployed.sh` → ALL CHECKS PASSED (two concurrent isolated runs, both `verified_pass`, rate limiter 429'd request #4) — Session 2, 2026-07-25
+- [x] Spec-fetch/`$ref` SSRF guard in `ci_runner`: pre-fetch host validation + `guarded_prance_resolve` gating prance's fetch choke point, blocks private hosts + `file`/`python` schemes; 3 tests — Session 2, 2026-07-25
+- [x] Hosting pivot: Cloudflare Worker (trigger + KV state + KV per-IP rate limit) + GitHub Actions invoking `ci_runner`; 9 worker unit tests + ci_runner live-verified — Session 2, 2026-07-25
+- [x] End-to-end pipeline runner (`ci_runner.py`): parse→generate→sandbox→self-correct in one job, live `succeeded`/`verified_pass` against Open-Meteo — Session 2, 2026-07-25
 - [x] Gemini self-correction loop (Task 9): capped Flash→Pro ladder, sandbox re-run every attempt; live-verified fix of a broken Open-Meteo model → `verified_pass` — Session 2, 2026-07-25
 - [x] Dropped Anthropic entirely; LLM layer is Google Gemini free tier only (never enable billing) — Session 2, 2026-07-25
 - [x] Sandbox network isolation (Task 8.5): per-run `--internal` net + pinned socat sidecar; other-public-IP-unreachable proven live — Session 2, 2026-07-25
