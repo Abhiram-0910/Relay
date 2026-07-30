@@ -139,7 +139,7 @@ system at all.
 Browser ─POST /api/runs {specUrl, apiKey?, provider?}─► Worker
                                      1–3. same as today (validate, rate-limit, mint runId)
                                      3a. if apiKey present: KV put byok:{runId}={apiKey,provider,
-                                         storedAt}, expirationTtl=120s — BEFORE dispatch
+                                         storedAt}, expirationTtl=240s — BEFORE dispatch
                                      4. workflow_dispatch inputs{run_id, spec_url, callback_url,
                                         has_byok: "true"|"false"}  ← apiKey NEVER enters this object
                                      5. 202 {runId, statusUrl}
@@ -161,7 +161,7 @@ Browser: already polls GET /api/runs/{runId} — once byokDeletedAt appears in t
 **KV schema addition:**
 | Key | Value | TTL |
 |-----|-------|-----|
-| `byok:{runId}` | `{apiKey, provider, storedAt}` | 120s, deleted on first read regardless of TTL |
+| `byok:{runId}` | `{apiKey, provider, storedAt}` | 240s, deleted on first read regardless of TTL |
 
 `run:{runId}` gains two optional fields once delivered: `byokReceivedAt`, `byokDeletedAt`. The
 `apiKey` value itself is never written into `run:{runId}` or any other longer-lived key — the only
