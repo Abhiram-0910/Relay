@@ -21,10 +21,13 @@
 //      "no DB, run state namespaced by run id" description) — rename to match
 //      the real binding name if it differs.
 
-const BYOK_TTL_SECONDS = 120; // KV minimum is 60s. 120s gives the Action time
-                               // to start before the ticket could be
-                               // considered stale, while staying short — this
-                               // is a single-use ticket, not a stored secret.
+const BYOK_TTL_SECONDS = 240; // KV minimum is 60s. Was 120s, but a genuinely
+                               // cold `make sandbox-build` in the Action can
+                               // push key-fetch past that ceiling, silently
+                               // expiring the ticket and falling back to the
+                               // shared key. 240s keeps headroom while staying
+                               // short — this is a single-use ticket (deleted
+                               // on first read), not a stored secret.
 
 /**
  * Call from the POST /api/runs handler, after runId is minted, before

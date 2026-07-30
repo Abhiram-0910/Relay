@@ -38,7 +38,7 @@ describe("storeByokKey", () => {
     const record = JSON.parse(raw);
     expect(record.apiKey).toBe("sk-live-abcdef123456");
     expect(record.provider).toBe("openai");
-    expect(env.RELAY_KV.store.get("byok:run-1").ttl).toBe(120);
+    expect(env.RELAY_KV.store.get("byok:run-1").ttl).toBe(240);
   });
 
   it("no-ops and returns false when no apiKey is supplied", async () => {
