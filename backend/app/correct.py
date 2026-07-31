@@ -16,9 +16,12 @@ The corrector reads the sandbox report's structured status to know what to fix:
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
+
+import requests
 
 from app.sandbox import STATUS_PASS, run_in_sandbox
 
@@ -83,6 +86,19 @@ def _apply_patch(pkg_dir: Path, patch: Patch, models_code: str, client_code: str
     return changed
 
 
+def _build_prompt(call_spec: dict, report: dict, models_code: str, client_code: str) -> str:
+    """The user prompt every provider adapter sends — the failing call, the sandbox verdict, and
+    both files' current contents. Shared so all providers correct against identical instructions."""
+    return (
+        f"Call being made: {call_spec.get('method')} on {call_spec.get('endpoint')} "
+        f"at base_url {call_spec.get('base_url')} with kwargs {call_spec.get('kwargs')}\n\n"
+        f"Sandbox failure status: {report['status']}\n"
+        f"Failure detail:\n{report['detail']}\n\n"
+        f"=== {_MODELS_FILE} ===\n{models_code}\n\n"
+        f"=== {_CLIENT_FILE} ===\n{client_code}\n"
+    )
+
+
 def gemini_corrector(model_id: str, call_spec: dict, report: dict,
                      models_code: str, client_code: str, *, api_key: str | None = None) -> Patch:
     """Ask Gemini for corrected file contents. Imported lazily so the loop's logic stays testable
@@ -96,14 +112,7 @@ def gemini_corrector(model_id: str, call_spec: dict, report: dict,
         models_py: str
         client_py: str
 
-    prompt = (
-        f"Call being made: {call_spec.get('method')} on {call_spec.get('endpoint')} "
-        f"at base_url {call_spec.get('base_url')} with kwargs {call_spec.get('kwargs')}\n\n"
-        f"Sandbox failure status: {report['status']}\n"
-        f"Failure detail:\n{report['detail']}\n\n"
-        f"=== {_MODELS_FILE} ===\n{models_code}\n\n"
-        f"=== {_CLIENT_FILE} ===\n{client_code}\n"
-    )
+    prompt = _build_prompt(call_spec, report, models_code, client_code)
 
     # BYOK key overrides the shared env key for this call only; else fall back to GEMINI_API_KEY.
     client = genai.Client(api_key=api_key) if api_key else genai.Client()
@@ -120,16 +129,74 @@ def gemini_corrector(model_id: str, call_spec: dict, report: dict,
     parsed = response.parsed
     if parsed is not None:
         return {"models_py": parsed.models_py, "client_py": parsed.client_py}
-    import json
     return json.loads(response.text)
 
 
-# Provider dispatch (Step 2 scaffolding). Only Gemini is wired today; the OpenAI-family and
-# Anthropic adapters land next, each registered under its own key(s) with the SAME
+# An LLM completion of two whole source files can be slow; give it real headroom rather than
+# tripping a short default timeout mid-generation.
+_CORRECTOR_TIMEOUT = 90
+
+# The Patch as a strict JSON Schema (OpenAI-family structured output). `strict: true` requires every
+# property listed in `required` and `additionalProperties: false` — this is the wire equivalent of
+# gemini_corrector's Pydantic `_PatchSchema`.
+_PATCH_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {"models_py": {"type": "string"}, "client_py": {"type": "string"}},
+    "required": ["models_py", "client_py"],
+    "additionalProperties": False,
+}
+
+
+def openai_compatible_corrector(base_url: str) -> Corrector:
+    """Factory: a corrector speaking the OpenAI Chat Completions protocol at `base_url`. One
+    implementation serves OpenAI, Grok (xAI), and OpenRouter — identical wire protocol, differing
+    only in base_url plus the user's key/model. Raw `requests`, no SDK (see ARCHITECTURE.md Step 2:
+    zero new deps). These providers are BYOK-only — there is no shared key — so `api_key` is
+    required; it is used for this one call and never logged or persisted."""
+    url = f"{base_url.rstrip('/')}/chat/completions"
+
+    def corrector(model_id: str, call_spec: dict, report: dict,
+                  models_code: str, client_code: str, *, api_key: str | None = None) -> Patch:
+        if not api_key:
+            raise ValueError("openai_compatible corrector requires a BYOK api_key")
+        payload = {
+            "model": model_id,
+            "messages": [
+                {"role": "system", "content": _SYSTEM_INSTRUCTION},
+                {"role": "user",
+                 "content": _build_prompt(call_spec, report, models_code, client_code)},
+            ],
+            "temperature": 0.0,  # deterministic-as-possible patches, same as Gemini
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {"name": "client_patch", "schema": _PATCH_JSON_SCHEMA,
+                                "strict": True},
+            },
+        }
+        resp = requests.post(
+            url, json=payload,
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            timeout=_CORRECTOR_TIMEOUT,
+        )
+        resp.raise_for_status()
+        content = resp.json()["choices"][0]["message"]["content"]
+        parsed = json.loads(content)  # strict json_schema guarantees both keys are present
+        return {"models_py": parsed["models_py"], "client_py": parsed["client_py"]}
+
+    return corrector
+
+
+# Provider dispatch. Each adapter honours the SAME
 # (model_id, call_spec, report, models_code, client_code, *, api_key) contract so `self_correct`
-# stays provider-agnostic. OpenAI/Grok/OpenRouter will share one openai_compatible(base_url)
-# adapter; Anthropic gets its own (tool-use structured output). See ARCHITECTURE.md "Step 2".
-CORRECTORS: dict[str, Corrector] = {"gemini": gemini_corrector}
+# stays provider-agnostic. OpenAI/Grok/OpenRouter share one openai_compatible(base_url) adapter
+# (identical wire protocol); Anthropic (its own tool-use adapter) lands next. See ARCHITECTURE.md
+# "Step 2". The shared free-tier key path is Gemini-only; the rest are BYOK-only.
+CORRECTORS: dict[str, Corrector] = {
+    "gemini": gemini_corrector,
+    "openai": openai_compatible_corrector("https://api.openai.com/v1"),
+    "grok": openai_compatible_corrector("https://api.x.ai/v1"),
+    "openrouter": openai_compatible_corrector("https://openrouter.ai/api/v1"),
+}
 
 
 def _resolve_corrector(provider: str | None) -> Corrector:

@@ -6,6 +6,7 @@ Gemini correction of a deliberately-broken Open-Meteo client through the real sa
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -138,13 +139,106 @@ def test_byok_pins_single_model_no_cross_model_escalation(tmp_path: Path) -> Non
     assert correct.GEMINI_FLASH not in models_used and correct.GEMINI_PRO not in models_used
 
 
-def test_provider_dispatch_resolves_gemini_and_rejects_unwired() -> None:
-    """Scaffolding: Gemini is wired; an unbuilt provider fails loudly rather than silently
-    falling back to Gemini."""
+def test_provider_dispatch_resolves_wired_and_rejects_unwired() -> None:
+    """Gemini + the OpenAI family are wired; an unbuilt provider (Anthropic, next) fails loudly
+    rather than silently falling back to Gemini."""
     assert correct._resolve_corrector("gemini") is correct.gemini_corrector
     assert correct._resolve_corrector(None) is correct.gemini_corrector  # default
+    for provider in ("openai", "grok", "openrouter"):
+        assert callable(correct._resolve_corrector(provider))
     with pytest.raises(NotImplementedError):
-        correct._resolve_corrector("openai")
+        correct._resolve_corrector("anthropic")
+
+
+# --- openai_compatible adapter (OpenAI / Grok / OpenRouter — one wire protocol) ----------------
+
+def _fake_chat_response(patch: dict):
+    """A MagicMock shaped like a requests Response whose body is an OpenAI chat-completion carrying
+    `patch` as the strict-json_schema content string."""
+    from unittest.mock import MagicMock
+
+    resp = MagicMock()
+    resp.raise_for_status.return_value = None
+    resp.json.return_value = {"choices": [{"message": {"content": json.dumps(patch)}}]}
+    return resp
+
+
+def test_openai_compatible_request_shape_and_parse() -> None:
+    from unittest.mock import patch as mock_patch
+
+    fixed = {"models_py": "# fixed model\n", "client_py": "# client\n"}
+    corrector = correct.openai_compatible_corrector("https://api.openai.com/v1")
+
+    with mock_patch("app.correct.requests.post", return_value=_fake_chat_response(fixed)) as post:
+        result = corrector("gpt-5", {"base_url": OPEN_METEO_BASE_URL, "endpoint": "/v1/forecast"},
+                           _report(sandbox.STATUS_CALL_FAILED), "# m\n", "# c\n", api_key="sk-user")
+
+    # Parsed into the SAME Patch dict shape gemini_corrector returns.
+    assert result == fixed
+
+    url = post.call_args.args[0] if post.call_args.args else post.call_args.kwargs["url"]
+    assert url == "https://api.openai.com/v1/chat/completions"
+    assert post.call_args.kwargs["headers"]["Authorization"] == "Bearer sk-user"
+
+    payload = post.call_args.kwargs["json"]
+    assert payload["model"] == "gpt-5"
+    rf = payload["response_format"]
+    assert rf["type"] == "json_schema"
+    assert rf["json_schema"]["strict"] is True
+    assert rf["json_schema"]["schema"]["required"] == ["models_py", "client_py"]
+    assert rf["json_schema"]["schema"]["additionalProperties"] is False
+
+
+def test_openai_compatible_registered_base_urls() -> None:
+    """OpenAI/Grok/OpenRouter share the adapter but must hit their own base URLs."""
+    from unittest.mock import patch as mock_patch
+
+    expected = {
+        "openai": "https://api.openai.com/v1/chat/completions",
+        "grok": "https://api.x.ai/v1/chat/completions",
+        "openrouter": "https://openrouter.ai/api/v1/chat/completions",
+    }
+    fixed = {"models_py": "# m\n", "client_py": "# c\n"}
+    for provider, want_url in expected.items():
+        with mock_patch("app.correct.requests.post",
+                        return_value=_fake_chat_response(fixed)) as post:
+            correct.CORRECTORS[provider]("some-model", {}, _report(sandbox.STATUS_CALL_FAILED),
+                                         "# m\n", "# c\n", api_key="sk-user")
+        url = post.call_args.args[0] if post.call_args.args else post.call_args.kwargs["url"]
+        assert url == want_url, provider
+
+
+def test_openai_compatible_requires_api_key() -> None:
+    """BYOK-only: no shared key exists for these providers, so a missing key is a hard error, not a
+    silent shared-key fallback (that path is Gemini-only)."""
+    corrector = correct.openai_compatible_corrector("https://api.openai.com/v1")
+    with pytest.raises(ValueError):
+        corrector("gpt-5", {}, _report(sandbox.STATUS_CALL_FAILED), "# m\n", "# c\n")
+
+
+def test_openai_compatible_routes_through_self_correct(tmp_path: Path) -> None:
+    """End-to-end hermetic: self_correct(provider="openai", model=...) routes to the openai adapter,
+    pins the chosen model, and its parsed patch flows through the normal loop."""
+    from unittest.mock import patch as mock_patch
+
+    pkg = _make_pkg(tmp_path)
+    fixed = {"models_py": "# fixed model\n", "client_py": "# client\n"}
+
+    def fake_sandbox(pkg_dir, call_spec):
+        return _report(sandbox.STATUS_PASS)  # first patch fixes it
+
+    with mock_patch("app.correct.requests.post", return_value=_fake_chat_response(fixed)) as post:
+        result = self_correct(
+            pkg, {"base_url": OPEN_METEO_BASE_URL}, _report(sandbox.STATUS_CALL_FAILED),
+            run_sandbox=fake_sandbox, api_key="sk-user", provider="openai", model="gpt-5",
+        )
+
+    assert result.succeeded
+    assert post.call_count == 1  # one model, fixed on first try (no cross-model escalation)
+    assert post.call_args.kwargs["json"]["model"] == "gpt-5"
+    url = post.call_args.args[0] if post.call_args.args else post.call_args.kwargs["url"]
+    assert url == "https://api.openai.com/v1/chat/completions"
+    assert (pkg / "models.py").read_text() == "# fixed model\n"
 
 
 # --- live: real Gemini fixes a real broken client through the real sandbox ----------------------
