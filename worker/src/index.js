@@ -8,6 +8,7 @@
  *   POST /api/runs                  { specUrl } -> 202 { runId, status, statusUrl }   (CORS)
  *   GET  /api/runs/:id              -> 200 run snapshot | 404                          (CORS)
  *   POST /api/runs/:id/progress     Action-only callback (Bearer CALLBACK_SECRET)      (no CORS)
+ *   POST /api/models                { provider, apiKey } -> 200 { models:[{id,label}] } (CORS)
  *
  * Credentials (three, distinct — see ARCHITECTURE.md):
  *   env.GH_PAT           Worker->GitHub, triggers workflow_dispatch. Only use.
@@ -16,6 +17,7 @@
  */
 
 import { storeByokKey, buildDispatchInputs, handleByokKeyFetch } from "./byok.js";
+import { handleModelsFetch } from "./models.js";
 
 const DAY_SECONDS = 86400;
 const PROGRESS_THROTTLE_MS = 1000; // KV allows 1 write/sec per key; coalesce faster updates
@@ -249,6 +251,9 @@ export async function handle(request, env) {
 
   if (pathname === "/api/runs" && request.method === "POST") {
     return handleCreateRun(request, env);
+  }
+  if (pathname === "/api/models" && request.method === "POST") {
+    return handleModelsFetch(request, env); // BYOK model-list fetch (transient key, provider cache)
   }
   const progressMatch = pathname.match(/^\/api\/runs\/([^/]+)\/progress$/);
   if (progressMatch && request.method === "POST") {
