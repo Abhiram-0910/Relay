@@ -186,16 +186,68 @@ def openai_compatible_corrector(base_url: str) -> Corrector:
     return corrector
 
 
+_ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
+_ANTHROPIC_VERSION = "2023-06-01"  # required header; the API version, not a model version
+_ANTHROPIC_TOOL_NAME = "emit_client_patch"
+# max_tokens is REQUIRED by the Messages API and bounds the whole response, which here is two entire
+# source files — give real headroom. Within every current Claude model's output cap.
+_ANTHROPIC_MAX_TOKENS = 16384
+
+
+def anthropic_corrector(model_id: str, call_spec: dict, report: dict,
+                        models_code: str, client_code: str, *, api_key: str | None = None) -> Patch:
+    """Anthropic Messages API corrector. Structured output is done via forced tool-use (not
+    `response_format`): a single tool whose `input_schema` is the Patch shape, `tool_choice` forcing
+    it, and the patch read from the response's `tool_use` block. Raw `requests`, no SDK (zero new
+    deps). BYOK-only — no shared Anthropic key exists — so `api_key` is required; used for this one
+    call, never logged or persisted. `_SYSTEM_INSTRUCTION` is the fixed role/rules (top-level
+    `system`); the per-run failing call + code go in the user message, same split as the other
+    adapters."""
+    if not api_key:
+        raise ValueError("anthropic corrector requires a BYOK api_key")
+    payload = {
+        "model": model_id,
+        "max_tokens": _ANTHROPIC_MAX_TOKENS,
+        "temperature": 0.0,  # deterministic-as-possible patches, same as the other adapters
+        "system": _SYSTEM_INSTRUCTION,
+        "messages": [
+            {"role": "user",
+             "content": _build_prompt(call_spec, report, models_code, client_code)},
+        ],
+        "tools": [{
+            "name": _ANTHROPIC_TOOL_NAME,
+            "description": "Return the full corrected contents of both files.",
+            "input_schema": _PATCH_JSON_SCHEMA,
+        }],
+        "tool_choice": {"type": "tool", "name": _ANTHROPIC_TOOL_NAME},
+    }
+    resp = requests.post(
+        _ANTHROPIC_URL, json=payload,
+        headers={"x-api-key": api_key, "anthropic-version": _ANTHROPIC_VERSION,
+                 "Content-Type": "application/json"},
+        timeout=_CORRECTOR_TIMEOUT,
+    )
+    resp.raise_for_status()
+    # tool_choice forces the tool, but the content list can carry other blocks (e.g. text) — scan
+    # for the tool_use block rather than assuming it's first.
+    for block in resp.json().get("content", []):
+        if block.get("type") == "tool_use":
+            inp = block["input"]  # forced strict tool schema guarantees both keys
+            return {"models_py": inp["models_py"], "client_py": inp["client_py"]}
+    raise ValueError("anthropic response contained no tool_use block")
+
+
 # Provider dispatch. Each adapter honours the SAME
 # (model_id, call_spec, report, models_code, client_code, *, api_key) contract so `self_correct`
 # stays provider-agnostic. OpenAI/Grok/OpenRouter share one openai_compatible(base_url) adapter
-# (identical wire protocol); Anthropic (its own tool-use adapter) lands next. See ARCHITECTURE.md
-# "Step 2". The shared free-tier key path is Gemini-only; the rest are BYOK-only.
+# (identical wire protocol); Anthropic has its own (forced tool-use structured output). See
+# ARCHITECTURE.md "Step 2". The shared free-tier key path is Gemini-only; the rest are BYOK-only.
 CORRECTORS: dict[str, Corrector] = {
     "gemini": gemini_corrector,
     "openai": openai_compatible_corrector("https://api.openai.com/v1"),
     "grok": openai_compatible_corrector("https://api.x.ai/v1"),
     "openrouter": openai_compatible_corrector("https://openrouter.ai/api/v1"),
+    "anthropic": anthropic_corrector,
 }
 
 

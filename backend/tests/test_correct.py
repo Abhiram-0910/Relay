@@ -139,15 +139,15 @@ def test_byok_pins_single_model_no_cross_model_escalation(tmp_path: Path) -> Non
     assert correct.GEMINI_FLASH not in models_used and correct.GEMINI_PRO not in models_used
 
 
-def test_provider_dispatch_resolves_wired_and_rejects_unwired() -> None:
-    """Gemini + the OpenAI family are wired; an unbuilt provider (Anthropic, next) fails loudly
-    rather than silently falling back to Gemini."""
+def test_provider_dispatch_resolves_wired_and_rejects_unknown() -> None:
+    """All five providers are wired; an UNKNOWN provider (typo/unsupported) fails loudly rather
+    than silently falling back to Gemini — that fail-loud guard is why _resolve_corrector exists."""
     assert correct._resolve_corrector("gemini") is correct.gemini_corrector
     assert correct._resolve_corrector(None) is correct.gemini_corrector  # default
-    for provider in ("openai", "grok", "openrouter"):
+    for provider in ("openai", "grok", "openrouter", "anthropic"):
         assert callable(correct._resolve_corrector(provider))
     with pytest.raises(NotImplementedError):
-        correct._resolve_corrector("anthropic")
+        correct._resolve_corrector("mistral")  # never registered
 
 
 # --- openai_compatible adapter (OpenAI / Grok / OpenRouter — one wire protocol) ----------------
@@ -238,6 +238,101 @@ def test_openai_compatible_routes_through_self_correct(tmp_path: Path) -> None:
     assert post.call_args.kwargs["json"]["model"] == "gpt-5"
     url = post.call_args.args[0] if post.call_args.args else post.call_args.kwargs["url"]
     assert url == "https://api.openai.com/v1/chat/completions"
+    assert (pkg / "models.py").read_text() == "# fixed model\n"
+
+
+# --- anthropic adapter (Messages API, forced tool-use structured output) -----------------------
+
+def _fake_anthropic_response(patch: dict, *, extra_blocks: list | None = None):
+    """A MagicMock shaped like a requests Response whose body is an Anthropic Messages reply
+    carrying `patch` in a tool_use block. `extra_blocks` are prepended (e.g. a text block) to prove
+    the parser scans for tool_use rather than assuming position."""
+    from unittest.mock import MagicMock
+
+    content = list(extra_blocks or [])
+    content.append({"type": "tool_use", "name": "emit_client_patch", "input": patch})
+    resp = MagicMock()
+    resp.raise_for_status.return_value = None
+    resp.json.return_value = {"content": content}
+    return resp
+
+
+def test_anthropic_request_shape_and_parse() -> None:
+    from unittest.mock import patch as mock_patch
+
+    fixed = {"models_py": "# fixed model\n", "client_py": "# client\n"}
+
+    with mock_patch("app.correct.requests.post",
+                    return_value=_fake_anthropic_response(fixed)) as post:
+        result = correct.anthropic_corrector(
+            "claude-opus-4-6", {"base_url": OPEN_METEO_BASE_URL, "endpoint": "/v1/forecast"},
+            _report(sandbox.STATUS_CALL_FAILED), "# m\n", "# c\n", api_key="sk-ant-user")
+
+    assert result == fixed  # same Patch dict shape as every other adapter
+
+    url = post.call_args.args[0] if post.call_args.args else post.call_args.kwargs["url"]
+    assert url == "https://api.anthropic.com/v1/messages"
+
+    headers = post.call_args.kwargs["headers"]
+    assert headers["x-api-key"] == "sk-ant-user"       # NOT Authorization: Bearer
+    assert headers["anthropic-version"] == "2023-06-01"
+
+    payload = post.call_args.kwargs["json"]
+    assert payload["model"] == "claude-opus-4-6"
+    assert payload["max_tokens"] >= 8192               # must cover two whole files
+    assert payload["system"] == correct._SYSTEM_INSTRUCTION  # rules in system, not user msg
+    # Structured output via forced tool-use, not response_format.
+    assert "response_format" not in payload
+    assert payload["tool_choice"] == {"type": "tool", "name": "emit_client_patch"}
+    tool = payload["tools"][0]
+    assert tool["name"] == "emit_client_patch"
+    assert tool["input_schema"]["required"] == ["models_py", "client_py"]
+
+
+def test_anthropic_parses_tool_use_among_other_blocks() -> None:
+    """A leading text block must not confuse the parser — it scans for the tool_use block."""
+    from unittest.mock import patch as mock_patch
+
+    fixed = {"models_py": "# fixed\n", "client_py": "# c\n"}
+    fake = _fake_anthropic_response(fixed, extra_blocks=[{"type": "text", "text": "here you go"}])
+    with mock_patch("app.correct.requests.post", return_value=fake):
+        result = correct.anthropic_corrector(
+            "claude-opus-4-6", {}, _report(sandbox.STATUS_CALL_FAILED),
+            "# m\n", "# c\n", api_key="sk-ant-user")
+    assert result == fixed
+
+
+def test_anthropic_requires_api_key() -> None:
+    """BYOK-only: no shared Anthropic key, so a missing key is a hard error, not a fallback."""
+    with pytest.raises(ValueError):
+        correct.anthropic_corrector("claude-opus-4-6", {}, _report(sandbox.STATUS_CALL_FAILED),
+                                    "# m\n", "# c\n")
+
+
+def test_anthropic_routes_through_self_correct(tmp_path: Path) -> None:
+    """End-to-end hermetic: self_correct(provider="anthropic", model=...) routes to the anthropic
+    adapter, pins the chosen model, and its parsed patch flows through the loop."""
+    from unittest.mock import patch as mock_patch
+
+    pkg = _make_pkg(tmp_path)
+    fixed = {"models_py": "# fixed model\n", "client_py": "# client\n"}
+
+    def fake_sandbox(pkg_dir, call_spec):
+        return _report(sandbox.STATUS_PASS)
+
+    with mock_patch("app.correct.requests.post",
+                    return_value=_fake_anthropic_response(fixed)) as post:
+        result = self_correct(
+            pkg, {"base_url": OPEN_METEO_BASE_URL}, _report(sandbox.STATUS_CALL_FAILED),
+            run_sandbox=fake_sandbox, api_key="sk-ant-user",
+            provider="anthropic", model="claude-opus-4-6",
+        )
+
+    assert result.succeeded
+    assert post.call_count == 1
+    assert post.call_args.kwargs["json"]["model"] == "claude-opus-4-6"
+    url = post.call_args.args[0] if post.call_args.args else post.call_args.kwargs["url"]
+    assert url == "https://api.anthropic.com/v1/messages"
     assert (pkg / "models.py").read_text() == "# fixed model\n"
 
 
