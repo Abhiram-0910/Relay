@@ -2,11 +2,13 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { ByokFields } from "@/components/ByokFields";
 import { CodeViewer } from "@/components/CodeViewer";
 import { RunProgress } from "@/components/RunProgress";
 import { StatusBadge } from "@/components/StatusBadge";
 import { ValidationReport } from "@/components/ValidationReport";
 import { createRun, getRun, RateLimitedError } from "@/lib/api";
+import { byokReceiptText, EMPTY_BYOK, type ByokState } from "@/lib/byok";
 import type { RateLimitInfo, RunSnapshot } from "@/lib/types";
 
 type Phase = "idle" | "creating" | "polling" | "done" | "error";
@@ -22,6 +24,7 @@ export default function Home() {
   const [snapshot, setSnapshot] = useState<RunSnapshot | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [rateLimit, setRateLimit] = useState<RateLimitInfo | null>(null);
+  const [byok, setByok] = useState<ByokState>(EMPTY_BYOK);
 
   const submit = useCallback(
     async (e: React.FormEvent) => {
@@ -34,7 +37,7 @@ export default function Home() {
       setSnapshot(null);
       setRunId(null);
       try {
-        const { runId } = await createRun(url);
+        const { runId } = await createRun(url, byok);
         setRunId(runId);
         setPhase("polling");
       } catch (err) {
@@ -43,7 +46,7 @@ export default function Home() {
         setPhase("error");
       }
     },
-    [specUrl],
+    [specUrl, byok],
   );
 
   useEffect(() => {
@@ -120,6 +123,7 @@ export default function Home() {
             {busy ? "Working…" : "Generate & validate"}
           </button>
         </div>
+        <ByokFields value={byok} onChange={setByok} disabled={busy} />
         <p className="text-xs text-muted">Free tier: 3 generations per day. Default is the Open-Meteo demo.</p>
       </form>
 
@@ -148,6 +152,12 @@ export default function Home() {
             <h2 className="text-sm font-medium text-muted">Run</h2>
             <StatusBadge status={snapshot.status} pulse={phase === "polling"} />
           </div>
+
+          {byokReceiptText(snapshot) && (
+            <p className="rounded-lg border border-emerald-500/20 bg-emerald-500/[0.04] p-3 text-xs text-emerald-200/90">
+              {byokReceiptText(snapshot)}
+            </p>
+          )}
 
           {phase === "polling" && <RunProgress snapshot={snapshot} />}
 

@@ -40,6 +40,19 @@ export interface RunSnapshot {
   result: RunResult | null;
   error: string | null;
   updatedAt: number;
+  // Stamped by the Worker when a BYOK key is delivered-once to the run (honest receipt data).
+  byokReceivedAt?: string;
+  byokDeletedAt?: string;
+}
+
+/** One selectable model from POST /api/models (uniform shape across all providers). */
+export interface ModelOption {
+  id: string;
+  label: string;
+}
+
+export interface ModelsResponse {
+  models: ModelOption[];
 }
 
 export interface CreateRunResponse {
