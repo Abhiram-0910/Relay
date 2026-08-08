@@ -133,8 +133,11 @@ def gemini_corrector(model_id: str, call_spec: dict, report: dict,
 
 
 # An LLM completion of two whole source files can be slow; give it real headroom rather than
-# tripping a short default timeout mid-generation.
-_CORRECTOR_TIMEOUT = 90
+# tripping a short default timeout mid-generation. 90s->300s: measured against Open-Meteo's
+# forecast spec, models.py is ~40KB (~10K tokens) and the corrector must regenerate the full file
+# verbatim inside a strict json_schema string — gpt-4o-mini timed out at 90s twice in a row on
+# exactly this payload (2026-08-08 live runs). 300s gives headroom past that measured worst case.
+_CORRECTOR_TIMEOUT = 300
 
 # The Patch as a strict JSON Schema (OpenAI-family structured output). `strict: true` requires every
 # property listed in `required` and `additionalProperties: false` — this is the wire equivalent of
