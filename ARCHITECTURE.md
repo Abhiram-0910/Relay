@@ -247,6 +247,19 @@ silently escalated to a different (costlier) model on their key.
   reference remains — it *filters* a live-fetched list, it does not *replace* it. Do not let it drift
   into a hardcoded model list, which the brief forbids.
 
+**Residual (documented, not over-fixed): `gpt-4o-mini` is not reliable for large-payload corrections.**
+Live-verified 2026-08-08 (`test_openai_fixes_broken_open_meteo_client`, `backend/tests/test_correct.py`):
+against Open-Meteo's forecast endpoint (`models.py` ~40KB / ~10K tokens — the corrector must return
+the full file verbatim under strict `json_schema`, plus one surgical fix), `gpt-4o-mini` exhausted
+all 3 BYOK ladder attempts without fixing the injected bug — it edited the wrong file on attempt 1,
+then returned the broken file byte-identical (no change at all) on attempt 2. `gpt-4o` fixed it
+within the same ladder, same prompt, same adapter code — so this is a model capability gap on
+"verbatim-copy-plus-edit at this payload size," not a prompt or wiring bug (confirmed: `_build_prompt`/
+`_SYSTEM_INSTRUCTION` are identical across every provider). Not fixed in code — BYOK is the user's own
+model choice; this is a known ceiling to know about before re-diagnosing it from scratch. (Separately,
+first attempt also surfaced a real infra issue, since fixed: `_CORRECTOR_TIMEOUT` was 90s, too tight
+for this payload size regardless of model — bumped to 300s, proven on the passing run.)
+
 **Frontend (Step 1's BYOK input was never built — `createRun` still sends only `{specUrl}`):** the
 provider dropdown, key field, and a **live-populated** model dropdown (from `POST /api/models`) all
 land here, together with the deferred Step 1 `byokReceivedAt`/`byokDeletedAt` receipt.
