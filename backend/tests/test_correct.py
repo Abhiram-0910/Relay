@@ -394,3 +394,41 @@ def test_gemini_fixes_broken_open_meteo_client(tmp_path: Path) -> None:
     assert result.succeeded, [a.__dict__ for a in result.attempts]
     assert result.final_report["status"] == sandbox.STATUS_PASS
     assert "models.py" in result.attempts[0].changed_files
+
+
+# --- live: real OpenAI (BYOK) fixes a real broken client through the real sandbox ---------------
+# Step 2 live proof (part B). A normal Open-Meteo run passes first-try and never calls the
+# corrector, so this deliberately breaks a model — same technique as the Gemini proof above — to
+# actually exercise the openai_compatible adapter against the real OpenAI API end to end.
+# Model defaults to gpt-4o-mini (supports strict json_schema structured output); override with
+# RELAY_LIVE_OPENAI_MODEL. BYOK-only: the key comes from OPENAI_API_KEY, never the shared key.
+
+def _openai_live_ready() -> bool:
+    if shutil.which("docker") is None or not os.environ.get("OPENAI_API_KEY"):
+        return False
+    return all(
+        subprocess.run(["docker", "image", "inspect", img], capture_output=True).returncode == 0
+        for img in (sandbox.SANDBOX_IMAGE, sandbox.SIDECAR_IMAGE)
+    )
+
+
+@pytest.mark.live
+@pytest.mark.skipif(not _openai_live_ready(),
+                    reason="needs docker + `make sandbox-build` + OPENAI_API_KEY")
+def test_openai_fixes_broken_open_meteo_client(tmp_path: Path) -> None:
+    model = os.environ.get("RELAY_LIVE_OPENAI_MODEL", "gpt-4o-mini")
+    pkg = tmp_path / "client_pkg"
+    pkg.mkdir()
+    call_spec = _build_broken_open_meteo_pkg(pkg)
+
+    pre = sandbox.run_in_sandbox(pkg, call_spec)
+    assert pre["status"] == sandbox.STATUS_VALIDATION_FAILED, pre  # broken as intended
+
+    # provider="openai" routes to the openai_compatible adapter; model pins the BYOK ladder to that
+    # one model (no cross-model escalation). api_key is the user's real OpenAI key.
+    result = self_correct(pkg, call_spec, pre, provider="openai", model=model,
+                          api_key=os.environ["OPENAI_API_KEY"])
+
+    assert result.succeeded, [a.__dict__ for a in result.attempts]
+    assert result.final_report["status"] == sandbox.STATUS_PASS
+    assert "models.py" in result.attempts[0].changed_files
