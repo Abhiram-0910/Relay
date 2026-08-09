@@ -52,10 +52,28 @@ jobs:
 
       # If the job dies before the runner reports a result (dep install, docker, OOM, timeout),
       # tell the Worker so the run shows "failed" instead of hanging at "queued" until TTL.
-      - name: Report infra failure
+      #
+      # `if: failure()` fires on ANY non-zero exit from "Run pipeline" -- which is EVERY classified
+      # failure too, since run() (ci_runner.py) always re-raises after reporting (Step 3 didn't
+      # change that, and an existing test depends on it). Found live (Step 4): this step used to fire
+      # unconditionally and clobber whatever ci_runner.py had already correctly reported -- e.g. a
+      # real spec_invalid run showed up as this generic message instead, silently destroying Step
+      # 3's classification on every single failure in production. Guard: only send the generic
+      # fallback if the run ISN'T ALREADY "failed" -- i.e. only for the cases this step actually
+      # exists for (dep install/docker/OOM/timeout, none of which ever reach ci_runner.py's own
+      # try/except). Fails OPEN: if the status check itself can't be read for any reason (network
+      # hiccup, malformed JSON, curl error), `status` stays "unknown" -- never "failed" -- so the
+      # fallback still fires rather than silently leaving the run stuck with no terminal state.
+      - name: Report infra failure (only if the runner never got to report anything itself)
         if: failure()
         run: |
-          curl -sS -X POST "${{ inputs.callback_url }}/api/runs/${{ inputs.run_id }}/progress" \
-            -H "Authorization: Bearer ${{ secrets.CALLBACK_SECRET }}" \
-            -H "Content-Type: application/json" \
-            -d '{"status":"failed","stage":"ci_error","error":"pipeline job failed before reporting a result"}'
+          status="unknown"
+          if body=$(curl -sS -m 15 "${{ inputs.callback_url }}/api/runs/${{ inputs.run_id }}"); then
+            status=$(echo "$body" | jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
+          fi
+          if [ "$status" != "failed" ]; then
+            curl -sS -X POST "${{ inputs.callback_url }}/api/runs/${{ inputs.run_id }}/progress" \
+              -H "Authorization: Bearer ${{ secrets.CALLBACK_SECRET }}" \
+              -H "Content-Type: application/json" \
+              -d '{"status":"failed","stage":"ci_error","error":"pipeline job failed before reporting a result"}'
+          fi
