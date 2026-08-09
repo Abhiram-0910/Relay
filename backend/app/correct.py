@@ -23,7 +23,7 @@ from typing import Callable
 
 import requests
 
-from app.sandbox import STATUS_PASS, run_in_sandbox
+from app.sandbox import STATUS_PASS, STATUS_TIMEOUT, run_in_sandbox
 
 # Model IDs kept as constants so swapping is one line. gemini-2.5-flash was retired for new API
 # keys ("no longer available to new users"), so Flash is pinned to the current stable 3.x line;
@@ -41,6 +41,47 @@ _CLIENT_FILE = "client.py"
 Patch = dict  # {"models_py": str, "client_py": str}
 # corrector(model_id, call_spec, report, models_code, client_code) -> Patch
 Corrector = Callable[[str, dict, dict, str, str], Patch]
+
+
+# Step 3 (honest error taxonomy): each adapter classifies ITS OWN provider-specific exceptions into
+# one of these four, so self_correct's loop stays provider-agnostic — it only ever isinstance-checks
+# against this shared, small vocabulary, never against requests/httpx/genai exception types directly.
+# Anything an adapter doesn't recognize is left unclassified (falls through to plain Exception),
+# which is the honest, safe default — never guess a bucket.
+class CorrectorAuthError(Exception):
+    """The provider rejected the key (401/403)."""
+
+
+class CorrectorQuotaError(Exception):
+    """Rate limit or quota exhausted (429)."""
+
+
+class CorrectorNetworkError(Exception):
+    """Never got a usable response from the provider — connection/timeout, or a 5xx (provider-side,
+    not something a code patch could fix)."""
+
+
+class CorrectorBadResponseError(Exception):
+    """Got a response but couldn't use it — missing/malformed structured-output content despite a
+    2xx status."""
+
+
+def _classify_corrector_exception(exc: Exception, *, byok: bool) -> str:
+    """Map a corrector exception to a status code, using `byok` only where the message/fix genuinely
+    differs (quota and auth) — see ARCHITECTURE.md Step 3. Unclassified exceptions (an adapter didn't
+    recognize the provider error, or something else entirely went wrong) stay the generic fallback."""
+    if isinstance(exc, CorrectorAuthError):
+        # BYOK: the user's own key was rejected, they can fix it. Shared key: the deployed
+        # GEMINI_API_KEY itself is broken — an infra bug, not something any user can act on.
+        return "corrector_auth_failed" if byok else "corrector_config_error"
+    if isinstance(exc, CorrectorQuotaError):
+        return "quota_exhausted_byok" if byok else "quota_exhausted_shared"
+    if isinstance(exc, CorrectorNetworkError):
+        return "corrector_network_error"
+    if isinstance(exc, CorrectorBadResponseError):
+        return "corrector_bad_response"
+    return "corrector_error"
+
 
 _SYSTEM_INSTRUCTION = """\
 You fix a generated Python API client that failed to validate against a live API.
@@ -105,8 +146,13 @@ def gemini_corrector(model_id: str, call_spec: dict, report: dict,
     without the SDK or an API key present. `api_key`, when set, is the user's BYOK key and is used
     for this call instead of the shared GEMINI_API_KEY env var; it is never logged or persisted."""
     from google import genai
+    from google.genai import errors as genai_errors
     from google.genai import types
     from pydantic import BaseModel
+    # httpx is google-genai's own transport dependency (not a new project dependency) — its sync
+    # client runs on httpx, not requests, so a true connection failure raises httpx's exception
+    # types, not requests'. Verified against the installed SDK (2.14.0), not assumed.
+    import httpx
 
     class _PatchSchema(BaseModel):
         models_py: str
@@ -116,20 +162,36 @@ def gemini_corrector(model_id: str, call_spec: dict, report: dict,
 
     # BYOK key overrides the shared env key for this call only; else fall back to GEMINI_API_KEY.
     client = genai.Client(api_key=api_key) if api_key else genai.Client()
-    response = client.models.generate_content(
-        model=model_id,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            system_instruction=_SYSTEM_INSTRUCTION,
-            temperature=0.0,  # deterministic-as-possible patches
-            response_mime_type="application/json",
-            response_schema=_PatchSchema,
-        ),
-    )
+    try:
+        response = client.models.generate_content(
+            model=model_id,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=_SYSTEM_INSTRUCTION,
+                temperature=0.0,  # deterministic-as-possible patches
+                response_mime_type="application/json",
+                response_schema=_PatchSchema,
+            ),
+        )
+    except genai_errors.ClientError as exc:
+        # .code is the HTTP status the SDK's own APIError hierarchy carries (verified: ClientError
+        # is raised for every 4xx). Anything other than 401/403/429 stays unclassified — re-raise as
+        # itself rather than guessing a bucket.
+        if exc.code in (401, 403):
+            raise CorrectorAuthError(str(exc)) from exc
+        if exc.code == 429:
+            raise CorrectorQuotaError(str(exc)) from exc
+        raise
+    except (httpx.ConnectError, httpx.TimeoutException) as exc:
+        raise CorrectorNetworkError(str(exc)) from exc
+
     parsed = response.parsed
     if parsed is not None:
         return {"models_py": parsed.models_py, "client_py": parsed.client_py}
-    return json.loads(response.text)
+    try:
+        return json.loads(response.text)
+    except json.JSONDecodeError as exc:
+        raise CorrectorBadResponseError(str(exc)) from exc
 
 
 # An LLM completion of two whole source files can be slow; give it real headroom rather than
@@ -176,15 +238,29 @@ def openai_compatible_corrector(base_url: str) -> Corrector:
                                 "strict": True},
             },
         }
-        resp = requests.post(
-            url, json=payload,
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            timeout=_CORRECTOR_TIMEOUT,
-        )
-        resp.raise_for_status()
-        content = resp.json()["choices"][0]["message"]["content"]
-        parsed = json.loads(content)  # strict json_schema guarantees both keys are present
-        return {"models_py": parsed["models_py"], "client_py": parsed["client_py"]}
+        try:
+            resp = requests.post(
+                url, json=payload,
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                timeout=_CORRECTOR_TIMEOUT,
+            )
+            resp.raise_for_status()
+        except requests.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else None
+            if status in (401, 403):
+                raise CorrectorAuthError(str(exc)) from exc
+            if status == 429:
+                raise CorrectorQuotaError(str(exc)) from exc
+            raise  # other HTTP errors stay unclassified — don't guess a bucket
+        except (requests.ConnectionError, requests.Timeout) as exc:
+            raise CorrectorNetworkError(str(exc)) from exc
+
+        try:
+            content = resp.json()["choices"][0]["message"]["content"]
+            parsed = json.loads(content)  # strict json_schema guarantees both keys are present
+            return {"models_py": parsed["models_py"], "client_py": parsed["client_py"]}
+        except (KeyError, TypeError, json.JSONDecodeError) as exc:
+            raise CorrectorBadResponseError(str(exc)) from exc
 
     return corrector
 
@@ -224,20 +300,34 @@ def anthropic_corrector(model_id: str, call_spec: dict, report: dict,
         }],
         "tool_choice": {"type": "tool", "name": _ANTHROPIC_TOOL_NAME},
     }
-    resp = requests.post(
-        _ANTHROPIC_URL, json=payload,
-        headers={"x-api-key": api_key, "anthropic-version": _ANTHROPIC_VERSION,
-                 "Content-Type": "application/json"},
-        timeout=_CORRECTOR_TIMEOUT,
-    )
-    resp.raise_for_status()
+    try:
+        resp = requests.post(
+            _ANTHROPIC_URL, json=payload,
+            headers={"x-api-key": api_key, "anthropic-version": _ANTHROPIC_VERSION,
+                     "Content-Type": "application/json"},
+            timeout=_CORRECTOR_TIMEOUT,
+        )
+        resp.raise_for_status()
+    except requests.HTTPError as exc:
+        status = exc.response.status_code if exc.response is not None else None
+        if status in (401, 403):
+            raise CorrectorAuthError(str(exc)) from exc
+        if status == 429:
+            raise CorrectorQuotaError(str(exc)) from exc
+        raise  # other HTTP errors stay unclassified — don't guess a bucket
+    except (requests.ConnectionError, requests.Timeout) as exc:
+        raise CorrectorNetworkError(str(exc)) from exc
+
     # tool_choice forces the tool, but the content list can carry other blocks (e.g. text) — scan
     # for the tool_use block rather than assuming it's first.
-    for block in resp.json().get("content", []):
-        if block.get("type") == "tool_use":
-            inp = block["input"]  # forced strict tool schema guarantees both keys
-            return {"models_py": inp["models_py"], "client_py": inp["client_py"]}
-    raise ValueError("anthropic response contained no tool_use block")
+    try:
+        for block in resp.json().get("content", []):
+            if block.get("type") == "tool_use":
+                inp = block["input"]  # forced strict tool schema guarantees both keys
+                return {"models_py": inp["models_py"], "client_py": inp["client_py"]}
+        raise CorrectorBadResponseError("anthropic response contained no tool_use block")
+    except (KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise CorrectorBadResponseError(str(exc)) from exc
 
 
 # Provider dispatch. Each adapter honours the SAME
@@ -310,6 +400,12 @@ def self_correct(
     for model_id in ladder:
         if report["status"] == STATUS_PASS:
             break
+        # ponytail: a timeout means the target API was slow, not that the generated code is wrong —
+        # skip straight to fail rather than burning a ladder attempt (tokens, or scarce Pro quota on
+        # the shared key) on a condition no patch can fix. Safe *because* generated clients don't
+        # currently have their own retry/backoff loops; revisit if that ever changes.
+        if report["status"] == STATUS_TIMEOUT:
+            break
 
         models_code = (pkg_dir / _MODELS_FILE).read_text()
         client_code = (pkg_dir / _CLIENT_FILE).read_text()
@@ -319,8 +415,9 @@ def self_correct(
             patch = (corrector(model_id, call_spec, report, models_code, client_code, api_key=api_key)
                      if api_key is not None
                      else corrector(model_id, call_spec, report, models_code, client_code))
-        except Exception as exc:  # quota/network/parse — stop, don't burn more of the ladder
-            attempts.append(Attempt(model_id, status_before, [], "corrector_error", str(exc)[:300]))
+        except Exception as exc:  # classify what we recognize; stop either way, don't burn the ladder
+            status_after = _classify_corrector_exception(exc, byok=api_key is not None)
+            attempts.append(Attempt(model_id, status_before, [], status_after, str(exc)[:300]))
             break
 
         changed = _apply_patch(pkg_dir, patch, models_code, client_code)

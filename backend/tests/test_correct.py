@@ -13,6 +13,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import requests
 
 from app import correct, sandbox
 from app.correct import Attempt, CorrectionResult, self_correct
@@ -150,6 +151,64 @@ def test_provider_dispatch_resolves_wired_and_rejects_unknown() -> None:
         correct._resolve_corrector("mistral")  # never registered
 
 
+# --- Step 3: STATUS_TIMEOUT skip + shared/BYOK error-code split --------------------------------
+
+def test_skips_corrector_entirely_on_timeout(tmp_path: Path) -> None:
+    """A timeout means the target API was slow, not that the code is wrong — no ladder attempt
+    should be spent (and no corrector call made) trying to "fix" it."""
+    pkg = _make_pkg(tmp_path)
+
+    def unused_corrector(*a, **k):
+        raise AssertionError("corrector should never be called for a timeout")
+
+    def unused_sandbox(*a, **k):
+        raise AssertionError("sandbox should never re-run — nothing was patched")
+
+    result = self_correct(
+        pkg, {"base_url": OPEN_METEO_BASE_URL}, _report(sandbox.STATUS_TIMEOUT),
+        run_sandbox=unused_sandbox, corrector=unused_corrector,
+    )
+
+    assert not result.succeeded
+    assert result.attempts == []
+    assert result.final_report["status"] == sandbox.STATUS_TIMEOUT
+
+
+def test_classify_corrector_exception_shared_vs_byok() -> None:
+    """The same exception maps to a different code depending on whether the key was shared or the
+    user's own — quota and auth are the two buckets where the message/fix genuinely differs."""
+    classify = correct._classify_corrector_exception
+    assert classify(correct.CorrectorQuotaError("x"), byok=False) == "quota_exhausted_shared"
+    assert classify(correct.CorrectorQuotaError("x"), byok=True) == "quota_exhausted_byok"
+    assert classify(correct.CorrectorAuthError("x"), byok=False) == "corrector_config_error"
+    assert classify(correct.CorrectorAuthError("x"), byok=True) == "corrector_auth_failed"
+    assert classify(correct.CorrectorNetworkError("x"), byok=True) == "corrector_network_error"
+    assert classify(correct.CorrectorBadResponseError("x"), byok=True) == "corrector_bad_response"
+    assert classify(RuntimeError("unrecognized"), byok=True) == "corrector_error"  # safe fallback
+
+
+def test_self_correct_routes_quota_error_through_byok_split(tmp_path: Path) -> None:
+    """End-to-end through self_correct (not just the classifier in isolation): a BYOK run's quota
+    error lands on quota_exhausted_byok, a shared-key run's on quota_exhausted_shared."""
+    pkg = _make_pkg(tmp_path)
+
+    def quota_corrector(model_id, call_spec, report, models_code, client_code, **kwargs):
+        raise correct.CorrectorQuotaError("rate limited")
+
+    shared_result = self_correct(
+        pkg, {"base_url": OPEN_METEO_BASE_URL}, _report(sandbox.STATUS_CALL_FAILED),
+        run_sandbox=lambda *a: _report(sandbox.STATUS_CALL_FAILED), corrector=quota_corrector,
+    )
+    assert shared_result.attempts[0].status_after == "quota_exhausted_shared"
+
+    byok_result = self_correct(
+        pkg, {"base_url": OPEN_METEO_BASE_URL}, _report(sandbox.STATUS_CALL_FAILED),
+        run_sandbox=lambda *a: _report(sandbox.STATUS_CALL_FAILED), corrector=quota_corrector,
+        api_key="sk-user",
+    )
+    assert byok_result.attempts[0].status_after == "quota_exhausted_byok"
+
+
 # --- openai_compatible adapter (OpenAI / Grok / OpenRouter — one wire protocol) ----------------
 
 def _fake_chat_response(patch: dict):
@@ -214,6 +273,65 @@ def test_openai_compatible_requires_api_key() -> None:
     corrector = correct.openai_compatible_corrector("https://api.openai.com/v1")
     with pytest.raises(ValueError):
         corrector("gpt-5", {}, _report(sandbox.STATUS_CALL_FAILED), "# m\n", "# c\n")
+
+
+def _fake_http_error_response(status_code: int):
+    """A MagicMock requests Response whose raise_for_status() raises a real requests.HTTPError
+    carrying that status code, same as a real 4xx/5xx would."""
+    from unittest.mock import MagicMock
+
+    resp = MagicMock()
+    resp.status_code = status_code
+    resp.raise_for_status.side_effect = requests.HTTPError(response=resp)
+    return resp
+
+
+@pytest.mark.parametrize("status_code,expected", [
+    (401, correct.CorrectorAuthError),
+    (403, correct.CorrectorAuthError),
+    (429, correct.CorrectorQuotaError),
+])
+def test_openai_compatible_classifies_auth_and_quota(status_code, expected) -> None:
+    from unittest.mock import patch as mock_patch
+
+    corrector = correct.openai_compatible_corrector("https://api.openai.com/v1")
+    with mock_patch("app.correct.requests.post", return_value=_fake_http_error_response(status_code)):
+        with pytest.raises(expected):
+            corrector("gpt-5", {}, _report(sandbox.STATUS_CALL_FAILED), "# m\n", "# c\n", api_key="sk-user")
+
+
+def test_openai_compatible_other_http_errors_stay_unclassified() -> None:
+    """A 500 (or any code that isn't 401/403/429) is left as the raw requests.HTTPError — never
+    guess a bucket for something we didn't verify the meaning of."""
+    from unittest.mock import patch as mock_patch
+
+    corrector = correct.openai_compatible_corrector("https://api.openai.com/v1")
+    with mock_patch("app.correct.requests.post", return_value=_fake_http_error_response(500)):
+        with pytest.raises(requests.HTTPError):
+            corrector("gpt-5", {}, _report(sandbox.STATUS_CALL_FAILED), "# m\n", "# c\n", api_key="sk-user")
+
+
+def test_openai_compatible_classifies_network_error() -> None:
+    from unittest.mock import patch as mock_patch
+
+    corrector = correct.openai_compatible_corrector("https://api.openai.com/v1")
+    with mock_patch("app.correct.requests.post", side_effect=requests.ConnectionError("boom")):
+        with pytest.raises(correct.CorrectorNetworkError):
+            corrector("gpt-5", {}, _report(sandbox.STATUS_CALL_FAILED), "# m\n", "# c\n", api_key="sk-user")
+
+
+def test_openai_compatible_classifies_bad_response() -> None:
+    """A 2xx whose content isn't the expected JSON patch is a bad response, not a network/auth
+    problem — got an answer, just not a usable one."""
+    from unittest.mock import MagicMock, patch as mock_patch
+
+    resp = MagicMock()
+    resp.raise_for_status.return_value = None
+    resp.json.return_value = {"choices": [{"message": {"content": "not json"}}]}
+    corrector = correct.openai_compatible_corrector("https://api.openai.com/v1")
+    with mock_patch("app.correct.requests.post", return_value=resp):
+        with pytest.raises(correct.CorrectorBadResponseError):
+            corrector("gpt-5", {}, _report(sandbox.STATUS_CALL_FAILED), "# m\n", "# c\n", api_key="sk-user")
 
 
 def test_openai_compatible_routes_through_self_correct(tmp_path: Path) -> None:
@@ -309,6 +427,52 @@ def test_anthropic_requires_api_key() -> None:
                                     "# m\n", "# c\n")
 
 
+@pytest.mark.parametrize("status_code,expected", [
+    (401, correct.CorrectorAuthError),
+    (403, correct.CorrectorAuthError),
+    (429, correct.CorrectorQuotaError),
+])
+def test_anthropic_classifies_auth_and_quota(status_code, expected) -> None:
+    from unittest.mock import patch as mock_patch
+
+    with mock_patch("app.correct.requests.post", return_value=_fake_http_error_response(status_code)):
+        with pytest.raises(expected):
+            correct.anthropic_corrector("claude-opus-4-6", {}, _report(sandbox.STATUS_CALL_FAILED),
+                                        "# m\n", "# c\n", api_key="sk-ant-user")
+
+
+def test_anthropic_other_http_errors_stay_unclassified() -> None:
+    from unittest.mock import patch as mock_patch
+
+    with mock_patch("app.correct.requests.post", return_value=_fake_http_error_response(500)):
+        with pytest.raises(requests.HTTPError):
+            correct.anthropic_corrector("claude-opus-4-6", {}, _report(sandbox.STATUS_CALL_FAILED),
+                                        "# m\n", "# c\n", api_key="sk-ant-user")
+
+
+def test_anthropic_classifies_network_error() -> None:
+    from unittest.mock import patch as mock_patch
+
+    with mock_patch("app.correct.requests.post", side_effect=requests.Timeout("boom")):
+        with pytest.raises(correct.CorrectorNetworkError):
+            correct.anthropic_corrector("claude-opus-4-6", {}, _report(sandbox.STATUS_CALL_FAILED),
+                                        "# m\n", "# c\n", api_key="sk-ant-user")
+
+
+def test_anthropic_classifies_missing_tool_use_as_bad_response() -> None:
+    """tool_choice forces the tool, but a 2xx with no tool_use block at all is still a response we
+    can't use — same bucket as malformed content, not a network/auth problem."""
+    from unittest.mock import MagicMock, patch as mock_patch
+
+    resp = MagicMock()
+    resp.raise_for_status.return_value = None
+    resp.json.return_value = {"content": [{"type": "text", "text": "oops, no tool call"}]}
+    with mock_patch("app.correct.requests.post", return_value=resp):
+        with pytest.raises(correct.CorrectorBadResponseError):
+            correct.anthropic_corrector("claude-opus-4-6", {}, _report(sandbox.STATUS_CALL_FAILED),
+                                        "# m\n", "# c\n", api_key="sk-ant-user")
+
+
 def test_anthropic_routes_through_self_correct(tmp_path: Path) -> None:
     """End-to-end hermetic: self_correct(provider="anthropic", model=...) routes to the anthropic
     adapter, pins the chosen model, and its parsed patch flows through the loop."""
@@ -334,6 +498,76 @@ def test_anthropic_routes_through_self_correct(tmp_path: Path) -> None:
     url = post.call_args.args[0] if post.call_args.args else post.call_args.kwargs["url"]
     assert url == "https://api.anthropic.com/v1/messages"
     assert (pkg / "models.py").read_text() == "# fixed model\n"
+
+
+# --- gemini adapter classification (hermetic — mocks google.genai.Client, no SDK network call) --
+
+def _fake_gemini_client(*, generate_content_side_effect=None, generate_content_return_value=None):
+    from unittest.mock import MagicMock
+
+    client = MagicMock()
+    if generate_content_side_effect is not None:
+        client.models.generate_content.side_effect = generate_content_side_effect
+    else:
+        client.models.generate_content.return_value = generate_content_return_value
+    return client
+
+
+@pytest.mark.parametrize("code,expected", [
+    (401, correct.CorrectorAuthError),
+    (403, correct.CorrectorAuthError),
+    (429, correct.CorrectorQuotaError),
+])
+def test_gemini_classifies_auth_and_quota(code, expected) -> None:
+    """Real google.genai.errors.ClientError, real .code attribute — verified against the installed
+    SDK (2.14.0), not assumed to mirror requests' HTTPError shape."""
+    from google.genai import errors as genai_errors
+    from unittest.mock import patch as mock_patch
+
+    client = _fake_gemini_client(generate_content_side_effect=genai_errors.ClientError(code, {"message": "x"}))
+    with mock_patch("google.genai.Client", return_value=client):
+        with pytest.raises(expected):
+            correct.gemini_corrector("gemini-3.5-flash", {}, _report(sandbox.STATUS_CALL_FAILED),
+                                     "# m\n", "# c\n", api_key="sk-user")
+
+
+def test_gemini_other_client_errors_stay_unclassified() -> None:
+    from google.genai import errors as genai_errors
+    from unittest.mock import patch as mock_patch
+
+    client = _fake_gemini_client(generate_content_side_effect=genai_errors.ClientError(400, {"message": "x"}))
+    with mock_patch("google.genai.Client", return_value=client):
+        with pytest.raises(genai_errors.ClientError):
+            correct.gemini_corrector("gemini-3.5-flash", {}, _report(sandbox.STATUS_CALL_FAILED),
+                                     "# m\n", "# c\n", api_key="sk-user")
+
+
+def test_gemini_classifies_network_error() -> None:
+    """google-genai's sync client runs on httpx, not requests — verified against the installed SDK,
+    so a true connection failure raises httpx's exception types, not requests'."""
+    import httpx
+    from unittest.mock import patch as mock_patch
+
+    client = _fake_gemini_client(generate_content_side_effect=httpx.ConnectError("boom"))
+    with mock_patch("google.genai.Client", return_value=client):
+        with pytest.raises(correct.CorrectorNetworkError):
+            correct.gemini_corrector("gemini-3.5-flash", {}, _report(sandbox.STATUS_CALL_FAILED),
+                                     "# m\n", "# c\n", api_key="sk-user")
+
+
+def test_gemini_classifies_bad_response() -> None:
+    """response.parsed is None (SDK couldn't fill the schema) and response.text isn't valid JSON
+    either — a response we got but can't use."""
+    from unittest.mock import MagicMock, patch as mock_patch
+
+    fake_response = MagicMock()
+    fake_response.parsed = None
+    fake_response.text = "not json"
+    client = _fake_gemini_client(generate_content_return_value=fake_response)
+    with mock_patch("google.genai.Client", return_value=client):
+        with pytest.raises(correct.CorrectorBadResponseError):
+            correct.gemini_corrector("gemini-3.5-flash", {}, _report(sandbox.STATUS_CALL_FAILED),
+                                     "# m\n", "# c\n", api_key="sk-user")
 
 
 # --- live: real Gemini fixes a real broken client through the real sandbox ----------------------
