@@ -180,4 +180,61 @@ describe("handleModelsFetch — per-provider request shape", () => {
     const ids = (await res.json()).models.map((m) => m.id);
     expect(ids).toEqual(["a/chat", "c/unknown"]);
   });
+
+  it("openrouter caps at OPENROUTER_MAX_MODELS (300) after the capability filter", async () => {
+    const env = makeEnv();
+    const data = Array.from({ length: 350 }, (_, i) => (
+      { id: `p/model-${i}`, name: `Model ${i}`, supported_parameters: ["tools"] }
+    ));
+    fetchMock.mockResolvedValue(fakeResponse(200, { data }));
+    const res = await handleModelsFetch(req({ provider: "openrouter", apiKey: "sk-or" }), env);
+    const models = (await res.json()).models;
+    expect(models).toHaveLength(300);
+    expect(models[0].id).toBe("p/model-0"); // slice keeps the front of the (already-filtered) list
+  });
+
+  it("grok uses Bearer auth against api.x.ai, no chat-prefix filter (all models kept)", async () => {
+    const env = makeEnv();
+    fetchMock.mockResolvedValue(fakeResponse(200, { data: [{ id: "grok-5" }, { id: "grok-5-mini" }] }));
+    const res = await handleModelsFetch(req({ provider: "grok", apiKey: "sk-grok" }), env);
+    const ids = (await res.json()).models.map((m) => m.id);
+    expect(ids).toEqual(["grok-5", "grok-5-mini"]); // unlike openai, no family filter to drop anything
+    const [url, opts] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://api.x.ai/v1/models");
+    expect(opts.headers.Authorization).toBe("Bearer sk-grok");
+  });
+});
+
+describe("handleModelsFetch — network/response failures (Step 4)", () => {
+  it("the fetch itself failing (network down, DNS, etc.) -> provider_unreachable, not cached", async () => {
+    const env = makeEnv();
+    fetchMock.mockRejectedValue(new Error("network down"));
+    const res = await handleModelsFetch(req({ provider: "openai", apiKey: "sk-oai" }), env);
+    expect(res.status).toBe(502);
+    expect((await res.json()).error).toBe("provider_unreachable");
+    expect(await env.RELAY_KV.get("models:openai")).toBeNull();
+  });
+
+  it("a real non-401/403 provider error (e.g. 500) -> provider_error, not cached", async () => {
+    const env = makeEnv();
+    fetchMock.mockResolvedValue(fakeResponse(500, { error: "internal" }));
+    const res = await handleModelsFetch(req({ provider: "anthropic", apiKey: "sk-ant" }), env);
+    expect(res.status).toBe(502);
+    const body = await res.json();
+    expect(body.error).toBe("provider_error");
+    expect(body.status).toBe(500); // the real upstream status rides along, unlike key_rejected
+    expect(await env.RELAY_KV.get("models:anthropic")).toBeNull();
+  });
+
+  it("a 2xx with an unparseable body -> provider_bad_response, not cached", async () => {
+    const env = makeEnv();
+    fetchMock.mockResolvedValue({
+      status: 200, ok: true,
+      json: async () => { throw new SyntaxError("Unexpected token in JSON"); },
+    });
+    const res = await handleModelsFetch(req({ provider: "openrouter", apiKey: "sk-or" }), env);
+    expect(res.status).toBe(502);
+    expect((await res.json()).error).toBe("provider_bad_response");
+    expect(await env.RELAY_KV.get("models:openrouter")).toBeNull();
+  });
 });
