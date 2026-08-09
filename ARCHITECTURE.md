@@ -260,6 +260,17 @@ model choice; this is a known ceiling to know about before re-diagnosing it from
 first attempt also surfaced a real infra issue, since fixed: `_CORRECTOR_TIMEOUT` was 90s, too tight
 for this payload size regardless of model — bumped to 300s, proven on the passing run.)
 
+**Residual (documented, not over-fixed): Anthropic/Grok/OpenRouter adapters have never been live-verified.**
+All three are hermetically tested (Step 2: request/response shape, structured-output parsing) and
+Anthropic's exception classification is additionally verified against real `requests.HTTPError`
+behavior (Step 3) — but none has ever made one real call to its actual provider API. Only Gemini
+(Task 9's original proof) and OpenAI (Step 2's Part B, re-confirmed Step 4) have live receipts. Not a
+blocker — BYOK means whichever provider the user picks, and the two proven providers already exercise
+the shared adapter code paths end to end (`openai_compatible` serves OpenAI/Grok/OpenRouter
+identically; only `base_url`/key differ). Live-verify Anthropic/Grok/OpenRouter specifically whenever
+a throwaway key for one becomes available — same deliberately-broken-client technique as the existing
+live tests, no new code needed.
+
 **Frontend (Step 1's BYOK input was never built — `createRun` still sends only `{specUrl}`):** the
 provider dropdown, key field, and a **live-populated** model dropdown (from `POST /api/models`) all
 land here, together with the deferred Step 1 `byokReceivedAt`/`byokDeletedAt` receipt.
