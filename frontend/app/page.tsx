@@ -9,6 +9,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { ValidationReport } from "@/components/ValidationReport";
 import { createRun, getRun, RateLimitedError } from "@/lib/api";
 import { byokReceiptText, EMPTY_BYOK, type ByokState } from "@/lib/byok";
+import { errorMessage, suggestsByok } from "@/lib/errors";
 import type { RateLimitInfo, RunSnapshot } from "@/lib/types";
 
 type Phase = "idle" | "creating" | "polling" | "done" | "error";
@@ -162,8 +163,9 @@ export default function Home() {
           {phase === "polling" && <RunProgress snapshot={snapshot} />}
 
           {snapshot.status === "failed" && snapshot.error && (
-            <p className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 font-mono text-xs text-red-300">
-              {snapshot.error}
+            <p className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-sm text-slate-300">
+              {errorMessage(snapshot.error)}
+              {suggestsByok(snapshot.error) && " You can also bring your own key to avoid this limit."}
             </p>
           )}
 

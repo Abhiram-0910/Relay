@@ -58,11 +58,13 @@ export function buildRunPayload(specUrl: string, byok: ByokState): RunPayload {
 }
 
 /** Human message for a failed model-list load — a rejected key is called out plainly rather than
- * left as a silent empty dropdown. */
+ * left as a silent empty dropdown. fetchModels already turns the Worker's error code into an
+ * honest message (lib/errors.ts) before throwing, so a generic Error's .message is used as-is. */
 export function modelErrorMessage(err: unknown): string {
   if (err instanceof KeyRejectedError) {
     return "Key rejected — check that the key is valid and matches the provider.";
   }
+  if (err instanceof Error && err.message) return err.message;
   return "Couldn’t load models. Check your connection and try again.";
 }
 

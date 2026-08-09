@@ -6,7 +6,7 @@
 //
 //   emerald (success)  -> verified_pass ONLY (and run-level "succeeded", i.e. all live-called passed)
 //   amber   (warn)     -> generated_only, verified_live_validation_failed, and in-progress states
-//   red     (danger)   -> call_failed, failed, ssrf_blocked, rate_limited, error
+//   red     (danger)   -> call_failed, sandbox_timeout, failed, ssrf_blocked, rate_limited, error
 //   slate   (neutral)  -> anything unknown
 
 export type Tone = "success" | "warn" | "danger" | "neutral";
@@ -22,6 +22,7 @@ const TONE_BY_STATUS: Record<string, Tone> = {
   running: "warn",
   // danger — failed, blocked, or rate-limited
   call_failed: "danger",
+  sandbox_timeout: "danger",
   failed: "danger",
   ssrf_blocked: "danger",
   rate_limited: "danger",
@@ -61,6 +62,7 @@ const LABELS: Record<string, string> = {
   verified_pass: "Verified live",
   verified_live_validation_failed: "Reached API · response mismatch",
   call_failed: "Call failed",
+  sandbox_timeout: "Timed out",
   generated_only: "Generated · not live-tested",
   ssrf_blocked: "Blocked (SSRF)",
   queued: "Queued",

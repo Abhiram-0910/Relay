@@ -1,4 +1,5 @@
 import { buildRunPayload, KeyRejectedError, type ByokState } from "./byok";
+import { errorMessage } from "./errors";
 import type {
   CodeBundle,
   CreateRunResponse,
@@ -42,7 +43,7 @@ export async function createRun(specUrl: string, byok?: ByokState): Promise<Crea
   }
   if (!res.ok) {
     const errBody = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(errBody.error ? `Worker rejected the request: ${errBody.error}` : `Request failed (${res.status})`);
+    throw new Error(errorMessage(errBody.error));
   }
   return (await res.json()) as CreateRunResponse;
 }
@@ -57,7 +58,10 @@ export async function fetchModels(provider: string, apiKey: string): Promise<Mod
     body: JSON.stringify({ provider, apiKey }),
   });
   if (res.status === 401 || res.status === 403) throw new KeyRejectedError();
-  if (!res.ok) throw new Error(`Fetching models failed (${res.status})`);
+  if (!res.ok) {
+    const errBody = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(errorMessage(errBody.error));
+  }
   return ((await res.json()) as ModelsResponse).models ?? [];
 }
 

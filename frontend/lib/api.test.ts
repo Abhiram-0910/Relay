@@ -59,8 +59,25 @@ describe("fetchModels", () => {
     await expect(fetchModels("anthropic", "sk-bad")).rejects.toBeInstanceOf(KeyRejectedError);
   });
 
-  it("throws a generic error on other non-ok statuses", async () => {
+  it("throws the honest per-code message, never a raw status number", async () => {
+    fetchMock.mockResolvedValue(fakeResponse(502, { error: "provider_error" }));
+    await expect(fetchModels("grok", "sk-live-abcdef123456")).rejects.toThrow(/unexpected error/i);
+  });
+
+  it("falls back to a generic message when the body has no recognizable code", async () => {
     fetchMock.mockResolvedValue(fakeResponse(502, {}));
-    await expect(fetchModels("grok", "sk-live-abcdef123456")).rejects.toThrow(/502/);
+    let caught: Error | undefined;
+    await fetchModels("grok", "sk-live-abcdef123456").catch((err: Error) => {
+      caught = err;
+    });
+    expect(caught?.message).not.toMatch(/502/);
+    expect(caught?.message.length).toBeGreaterThan(0);
+  });
+});
+
+describe("createRun — error messages", () => {
+  it("throws the honest per-code message on a non-ok, non-429 response", async () => {
+    fetchMock.mockResolvedValue(fakeResponse(400, { error: "invalid_spec_url" }));
+    await expect(createRun("not-a-url", EMPTY_BYOK)).rejects.toThrow(/reachable spec URL/i);
   });
 });
