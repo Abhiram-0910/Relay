@@ -6,11 +6,11 @@ Claude reads this at the START of every new session to understand what happened 
 ---
 
 ## Project State
-**Last updated:** 2026-08-01
+**Last updated:** 2026-08-08
 **Current branch:** main
 **Overall status:** MVP is **complete and live-verified end-to-end, frontend included** (see Session 2 close, 2026-07-26). Vercel frontend (`https://relay-cyan-rho.vercel.app`) → Cloudflare Worker (`https://relay-worker.abhiram-dev.workers.dev`) → GitHub Actions → Docker sandbox → Gemini self-correction → KV, with per-IP rate limiting, run-id isolation, and a code viewer. A real browser run polls to `Succeeded` / `verified_pass` and shows the real generated client. Nothing in the MVP is claimed-but-unproven. Tests: backend 33 · worker 12 · frontend 7 hermetic, all green.
 
-**Phase 2 (scoped 2026-07-26, build starting Session 3, 2026-07-27):** BYOK security infrastructure → multi-provider LLM (Gemini/OpenAI/Anthropic/Grok/OpenRouter) → honest error taxonomy → full QA re-verification → visual/UX pass → `/security-review` + remediation → final retest and deliver. **Progress:** Step 1 (BYOK) CLOSED live (Session 4). Step 2 (multi-provider) BUILT + hermetically tested across backend/worker/frontend (Session 5, commits `f0570e6`→`052510b`; backend 50 · worker 32 · frontend 25) but **NOT closed — no live receipt yet**; a real non-Gemini browser run is the next action. Steps 3–7 not started. Nothing in Phase 2 is claimed-but-unproven — each step stays open until its own live receipt, same discipline as Phase 1.
+**Phase 2 (scoped 2026-07-26, build starting Session 3, 2026-07-27):** BYOK security infrastructure → multi-provider LLM (Gemini/OpenAI/Anthropic/Grok/OpenRouter) → honest error taxonomy → full QA re-verification → visual/UX pass → `/security-review` + remediation → final retest and deliver. **Progress:** Step 1 (BYOK) CLOSED live (Session 4). Step 2 (multi-provider) CLOSED live (Session 6, commits `4866d2a`→`7f846fb`) — see Session 6 for the full receipt; one accepted gap logged there (corrector proven live independently of the deployed pipeline, not together in one run — no test-injection hook exists in the public API for that). Steps 3–7 not started. Nothing in Phase 2 is claimed-but-unproven — each step stays open until its own live receipt, same discipline as Phase 1.
 
 ---
 
@@ -222,5 +222,22 @@ Claude reads this at the START of every new session to understand what happened 
 **Tests — hermetic only, all green:** backend **50**, worker **32**, frontend **25**; frontend `tsc --noEmit` clean. Adapters mock the provider HTTP call; `/api/models` uses FakeKV + mocked `fetch`; frontend tests are pure-fn (buildRunPayload no-key-when-unused, debounce fake-timers + guard, `fetchModels`→`KeyRejectedError`, receipt gating).
 
 **NOT closed — no live receipt yet.** Everything above is hermetic. Per this project's zero-claimed-but-unproven discipline, Step 2 stays open until a real browser run with a throwaway **non-Gemini** key proves: (1) the model dropdown populates from a real `POST /api/models`, (2) a run actually self-corrects on that provider/model (deliberately break a model to exercise correction, like Task 9's original live proof), (3) the `byokReceivedAt`/`byokDeletedAt` receipt renders in the real browser. That live verification is the next action; only then does TODO's Step 2 get checked off with the receipt.
+
+### Session 6 — 2026-08-08 — Step 2 (multi-provider) CLOSED live
+**Goal:** Take Session 5's hermetically-tested-but-unproven Step 2 and get its live receipt — the corrector live-verified on a non-Gemini BYOK provider, plus the full deployed Worker/Action/BYOK-receipt path proven end to end. Session picked up cold after a laptop restart; first confirmed nothing was lost — Docker images (`relay-sandbox`, `relay-sidecar`, built 2026-07-25, Dockerfile unchanged since), the deployed Worker, and all prior commits were intact. `test_openai_fixes_broken_open_meteo_client` (Part B's test) was written Session 5 but still uncommitted and never run live — confirmed via git status/diff, not assumed.
+
+**Part B — backend corrector, live (`4866d2a`, `1a16ab9`):**
+- First live attempt (`gpt-4o-mini`) failed twice in a row: `HTTPSConnectionPool(host='api.openai.com'...) Read timed out (read timeout=90)`. Diagnosed, not guessed: `api.openai.com/v1/models` responded in 1.1s with the same key (connectivity fine), and the actual payload was measured — Open-Meteo's `models.py` is ~40KB/~10K tokens, which the corrector must return in full, verbatim, inside a strict `json_schema` string. `_CORRECTOR_TIMEOUT` 90→300 (`4866d2a`), committed independently of the model-capability question — proven on its own merit (next run completed the full 383s, no timeout).
+- With the timeout fixed, `gpt-4o-mini` still failed — but now on model quality, not infra: attempt 1 edited the wrong file (rule said fix `models.py` on this failure status, it changed `client.py`), attempt 2 returned `models.py` byte-identical to the broken input (no fix attempted), 3/3 ladder attempts exhausted (BYOK never escalates models). Ruled out a Gemini-biased prompt first: `_build_prompt`/`_SYSTEM_INSTRUCTION` confirmed identical across every provider. `RELAY_LIVE_OPENAI_MODEL=gpt-4o` → `1 passed` — same prompt, same adapter code, only the model changed. Committed (`1a16ab9`) with the receipt in the message; the `gpt-4o-mini` finding logged as a documented residual in ARCHITECTURE.md's Step 2 section (`7f846fb`) so a future session doesn't rediscover it by burning API credits again.
+
+**Part A — deployed Worker/Action, live (docs `7f846fb`):**
+- `POST /api/models {provider:"openai", apiKey}` → `200`, real live list (105 models, incl. `gpt-4o`).
+- `POST /api/runs {specUrl, apiKey, provider:"openai", model:"gpt-4o"}` → `202`, run `1955733a-03b7-4486-bdf8-51b27129c524`, polled `queued/None` → `succeeded/done`. Final snapshot: `/v1/forecast` → `verified_pass`, `byokReceivedAt=2026-08-08T16:45:51.060Z`, `byokDeletedAt=2026-08-08T16:46:24.817Z`.
+
+**Accepted gap (logged, not blocking closure):** this run used the real, unmodified spec, so it validated on the first generated attempt (`"attempts": []`) — the corrector fired live (Part B) and the deployed pipeline fired live (Part A), but never together in one run: no test-injection hook exists in the public API to deliberately break a client through `/api/runs`. Same two-piece proof pattern as Task 9's original Gemini verification (pytest-level live fix + a separately proven deployed E2E pass), accepted on that precedent.
+
+**Security note (not a code issue):** a real OpenAI key was exported into the terminal transcript directly by the user this session rather than injected out-of-band. Flagged in-session; not persisted to any file, memory, or commit. User was advised to rotate/revoke it after this session's live runs.
+
+**Next:** Step 3 — honest error taxonomy.
 
 <!-- Copy the block above for each new session -->
