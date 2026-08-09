@@ -28,12 +28,16 @@ from pathlib import Path
 import prance.util.url as _prance_url
 import requests
 from openapi_spec_validator import validate as validate_spec
+from openapi_spec_validator.validation.exceptions import OpenAPIValidationError
 from prance import ResolvingParser
+from prance import ValidationError as PranceValidationError
+from prance.util.formats import ParseError as PranceParseError
+from prance.util.url import ResolutionError as PranceResolutionError
 
 from app.byok import run_with_optional_byok
 from app.correct import self_correct
 from app.generate import generate_all_endpoints
-from app.sandbox import STATUS_PASS, SSRFError, resolve_and_validate_host, run_in_sandbox
+from app.sandbox import STATUS_PASS, SandboxError, SSRFError, resolve_and_validate_host, run_in_sandbox
 
 # $ref resolution runs on the CI runner, which has network access — an untrusted spec must not be
 # able to make prance fetch a private/metadata host or read local files. We gate EVERY url prance
@@ -97,9 +101,14 @@ class Reporter:
         self.live = bool(self.run_id and self.base and self.secret)
 
     def send(self, status: str, *, stage: str | None = None, progress: dict | None = None,
-             result: dict | None = None, error: str | None = None, retries: int = 1) -> None:
+             result: dict | None = None, error: str | None = None, error_detail: str | None = None,
+             retries: int = 1) -> None:
+        # error is a stable taxonomy CODE (Step 3) meant to be rendered; error_detail is the raw
+        # exception text, kept for debugging only. Both land in KV either way (this reporter has no
+        # opinion on that) — never printed anywhere else, since local mode is the only print path
+        # and that's a developer's own terminal, not the Action's public log.
         snapshot = {"status": status, "stage": stage, "progress": progress,
-                    "result": result, "error": error}
+                    "result": result, "error": error, "error_detail": error_detail}
         if not self.live:
             print("[report]", json.dumps({k: v for k, v in snapshot.items() if v is not None}))
             return
@@ -216,6 +225,32 @@ def _live_validate(spec: dict, generated: list[dict], api_key: str | None = None
     return verdicts
 
 
+class _GenerationError(Exception):
+    """Marks a failure during generate_all_endpoints for _classify_pipeline_error below.
+    Generation has no exception type of its own to key off (unlike SSRFError/SandboxError/etc.), so
+    this wraps whatever it actually raised — same "adapter classifies, shared function maps" shape
+    as correct.py's corrector marker exceptions."""
+
+
+def _classify_pipeline_error(exc: Exception) -> str:
+    """Map a pipeline-stage exception to a stable status code (Step 3: honest error taxonomy).
+    Safe by construction: SSRFError/SandboxError/requests.RequestException/the prance+
+    openapi_spec_validator exceptions each occur at exactly one stage of `run()` (verified — nothing
+    else in this pipeline can raise them), so type alone is enough to place the failure. Anything
+    unrecognized stays internal_error, the honest catch-all — never a guessed bucket."""
+    if isinstance(exc, _GenerationError):
+        return "generation_failed"
+    if isinstance(exc, SSRFError):
+        return "ssrf_blocked_spec"
+    if isinstance(exc, SandboxError):
+        return "sandbox_unavailable"
+    if isinstance(exc, requests.RequestException):
+        return "spec_fetch_failed"
+    if isinstance(exc, (PranceParseError, PranceResolutionError, PranceValidationError, OpenAPIValidationError)):
+        return "spec_invalid"
+    return "internal_error"
+
+
 def run(spec_url: str, reporter: Reporter | None = None) -> dict:
     """Run the full pipeline for one spec URL, returning the final result dict."""
     rep = reporter or Reporter()
@@ -230,8 +265,11 @@ def run(spec_url: str, reporter: Reporter | None = None) -> dict:
         title = spec.get("info", {}).get("title")
         rep.send("running", stage="spec_validated", progress={"title": title})
 
-        with tempfile.TemporaryDirectory() as tmp:
-            items = list(generate_all_endpoints(spec, Path(tmp)))
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                items = list(generate_all_endpoints(spec, Path(tmp)))
+        except Exception as exc:
+            raise _GenerationError(str(exc)) from exc
         generated = [{k: v for k, v in it.items() if k not in {"index", "total", "status"}}
                      for it in items if it["status"] == "generated"]
         skipped = [{"endpoint": it["endpoint"], "reason": it["reason"]}
@@ -270,7 +308,9 @@ def run(spec_url: str, reporter: Reporter | None = None) -> dict:
         rep.send(final_status, stage="done", result=result, retries=3)
         return {"status": final_status, **result}
     except Exception as exc:
-        rep.send("failed", stage="error", error=f"{type(exc).__name__}: {exc}", retries=3)
+        code = _classify_pipeline_error(exc)
+        detail = f"{type(exc).__name__}: {exc}"[:500]
+        rep.send("failed", stage="error", error=code, error_detail=detail, retries=3)
         raise
 
 

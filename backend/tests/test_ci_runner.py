@@ -6,11 +6,16 @@ from urllib.parse import urlsplit
 
 import prance.util.url as _prance_url
 import pytest
+import requests
+from openapi_spec_validator.validation.exceptions import OpenAPIValidationError
 from prance import ResolvingParser
+from prance import ValidationError as PranceValidationError
+from prance.util.formats import ParseError as PranceParseError
+from prance.util.url import ResolutionError as PranceResolutionError
 
 from app import ci_runner
 from app.ci_runner import Reporter, _code_files, _required_kwargs, _resolve_base_url
-from app.sandbox import SSRFError
+from app.sandbox import SandboxError, SSRFError
 
 
 def test_resolve_base_url_prefers_spec_servers() -> None:
@@ -137,3 +142,81 @@ def test_malicious_ref_rejected_during_resolution_not_followed(monkeypatch) -> N
     assert _has_ssrf(exc_info.value)
     # ...and the private host was never actually fetched.
     assert not any("127.0.0.1" in url for url in fetched)
+
+
+# --- Step 3: pipeline-level error classification ------------------------------------------------
+
+def test_classify_pipeline_error_maps_every_known_type() -> None:
+    classify = ci_runner._classify_pipeline_error
+    assert classify(SSRFError("x")) == "ssrf_blocked_spec"
+    assert classify(SandboxError("x")) == "sandbox_unavailable"
+    assert classify(requests.ConnectionError("x")) == "spec_fetch_failed"
+    assert classify(requests.Timeout("x")) == "spec_fetch_failed"
+    assert classify(PranceParseError("x")) == "spec_invalid"
+    assert classify(PranceResolutionError("x")) == "spec_invalid"
+    assert classify(PranceValidationError("x")) == "spec_invalid"
+    # OpenAPIValidationError's real constructor needs jsonschema.ValidationError's args; isinstance
+    # is all the classifier checks, so a bare instance via __new__ is enough to prove the mapping.
+    assert classify(OpenAPIValidationError.__new__(OpenAPIValidationError)) == "spec_invalid"
+    assert classify(ci_runner._GenerationError("x")) == "generation_failed"
+    assert classify(RuntimeError("something else entirely")) == "internal_error"
+
+
+class _CapturingReporter:
+    """Duck-typed stand-in for Reporter — run() only ever calls .send()/.send_code() on whatever
+    it's given, so this skips real env-var/HTTP plumbing and just records what was sent."""
+
+    def __init__(self) -> None:
+        self.sent: list[dict] = []
+
+    def send(self, status, *, stage=None, progress=None, result=None, error=None,
+             error_detail=None, retries=1) -> None:
+        self.sent.append({"status": status, "stage": stage, "error": error, "error_detail": error_detail})
+
+    def send_code(self, files, retries=2) -> None:
+        pass
+
+
+def test_run_reports_ssrf_blocked_spec_code(monkeypatch) -> None:
+    monkeypatch.setattr(ci_runner.requests, "get",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not fetch")))
+    rep = _CapturingReporter()
+    with pytest.raises(SSRFError):
+        ci_runner.run("http://169.254.169.254/openapi.yaml", reporter=rep)
+
+    failed = [s for s in rep.sent if s["status"] == "failed"]
+    assert len(failed) == 1
+    assert failed[0]["error"] == "ssrf_blocked_spec"
+    assert failed[0]["error_detail"]  # raw text present — kept for KV/debugging, never rendered raw
+
+
+_MINIMAL_VALID_SPEC = """\
+openapi: "3.0.0"
+info: {title: t, version: "1"}
+paths: {}
+"""
+
+
+def test_run_reports_generation_failed_code(monkeypatch) -> None:
+    """Generation has no exception type of its own (unlike SSRF/sandbox/fetch/parse) — this proves
+    the _GenerationError wrap+classify still lands the right code."""
+    from unittest.mock import MagicMock
+
+    monkeypatch.setattr(ci_runner, "resolve_and_validate_host", lambda url: "8.8.8.8")
+    fake_resp = MagicMock(text=_MINIMAL_VALID_SPEC)
+    fake_resp.raise_for_status.return_value = None
+    monkeypatch.setattr(ci_runner.requests, "get", lambda *a, **k: fake_resp)
+
+    def boom(spec, tmp_dir):
+        raise RuntimeError("template blew up")
+
+    monkeypatch.setattr(ci_runner, "generate_all_endpoints", boom)
+
+    rep = _CapturingReporter()
+    with pytest.raises(ci_runner._GenerationError):
+        ci_runner.run("https://example.com/openapi.yaml", reporter=rep)
+
+    failed = [s for s in rep.sent if s["status"] == "failed"]
+    assert len(failed) == 1
+    assert failed[0]["error"] == "generation_failed"
+    assert "template blew up" in failed[0]["error_detail"]
