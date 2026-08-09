@@ -100,6 +100,59 @@ describe("POST /api/runs", () => {
   });
 });
 
+// Step 4: the BYOK fields (apiKey/provider/model) were only ever tested against byok.js's
+// exported functions directly (test/byok.test.js) — never through the real POST /api/runs route
+// this handler actually serves. These prove the real wiring, not just the isolated functions.
+describe("POST /api/runs — BYOK wiring", () => {
+  it("stores byok:{runId} and flags has_byok=true in the real dispatch inputs", async () => {
+    const env = makeEnv();
+    const body = { specUrl: SPEC.specUrl, apiKey: "sk-live-abcdef123456", provider: "openai", model: "gpt-5" };
+    const res = await handle(req("POST", "/api/runs", { body, headers: IP("6.6.6.1") }), env);
+    expect(res.status).toBe(202);
+    const { runId } = await res.json();
+
+    const byokEntry = await env.RELAY_KV.get(`byok:${runId}`, "json");
+    expect(byokEntry.apiKey).toBe("sk-live-abcdef123456");
+    expect(byokEntry.provider).toBe("openai");
+    expect(byokEntry.model).toBe("gpt-5");
+
+    const sent = JSON.parse(dispatch.mock.calls[0][1].body);
+    expect(sent.inputs.has_byok).toBe("true");
+    // buildDispatchInputs already proves this structurally (byok.test.js) — this proves the real
+    // route never regresses it by, say, spreading the body into inputs somewhere along the way.
+    expect(JSON.stringify(sent.inputs)).not.toContain("sk-live-abcdef123456");
+  });
+
+  it("a plain run (no BYOK fields) gets has_byok=false and no byok:{runId} entry at all", async () => {
+    const env = makeEnv();
+    const res = await handle(req("POST", "/api/runs", { body: SPEC, headers: IP("6.6.6.2") }), env);
+    const { runId } = await res.json();
+    expect(await env.RELAY_KV.get(`byok:${runId}`)).toBeNull();
+    const sent = JSON.parse(dispatch.mock.calls[0][1].body);
+    expect(sent.inputs.has_byok).toBe("false");
+  });
+
+  it("rejects a malformed apiKey with 400 invalid_api_key, never dispatches, refunds the rate limit", async () => {
+    const env = makeEnv({ RATE_LIMIT: "2" });
+    const body = { specUrl: SPEC.specUrl, apiKey: "short", provider: "openai" };
+    const res = await handle(req("POST", "/api/runs", { body, headers: IP("6.6.6.3") }), env);
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("invalid_api_key");
+    expect(dispatch).not.toHaveBeenCalled();
+    const day = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    expect(await env.RELAY_KV.get(`rl:6.6.6.3:${day}`)).toBe("0");
+  });
+
+  it("rejects a malformed model (empty string) the same way, apiKey alone isn't enough to pass", async () => {
+    const env = makeEnv();
+    const body = { specUrl: SPEC.specUrl, apiKey: "sk-live-abcdef123456", provider: "openai", model: "" };
+    const res = await handle(req("POST", "/api/runs", { body, headers: IP("6.6.6.4") }), env);
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("invalid_api_key");
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+});
+
 describe("run-id isolation", () => {
   it("two concurrent runs get distinct ids and never cross-contaminate polls", async () => {
     const env = makeEnv();

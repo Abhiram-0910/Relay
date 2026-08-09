@@ -53,6 +53,27 @@ describe("storeByokKey", () => {
     await expect(storeByokKey(env, "run-1", "short", "openai")).rejects.toThrow();
     expect(await env.RELAY_KV.get("byok:run-1")).toBeNull();
   });
+
+  it("stores the model when given, alongside the key", async () => {
+    const env = makeEnv();
+    await storeByokKey(env, "run-1", "sk-live-abcdef123456", "openai", "gpt-5");
+    const record = JSON.parse(await env.RELAY_KV.get("byok:run-1"));
+    expect(record.model).toBe("gpt-5");
+  });
+
+  it("rejects a malformed model (empty string) instead of storing it — same fail-closed stance as apiKey", async () => {
+    const env = makeEnv();
+    await expect(storeByokKey(env, "run-1", "sk-live-abcdef123456", "openai", "")).rejects.toThrow();
+    expect(await env.RELAY_KV.get("byok:run-1")).toBeNull();
+  });
+
+  it("omitting model entirely is fine — shared-key/Gemini-default runs don't have one", async () => {
+    const env = makeEnv();
+    const stored = await storeByokKey(env, "run-1", "sk-live-abcdef123456", "openai");
+    expect(stored).toBe(true);
+    const record = JSON.parse(await env.RELAY_KV.get("byok:run-1"));
+    expect(record.model).toBeNull();
+  });
 });
 
 describe("buildDispatchInputs — the structural leak-proof guarantee", () => {
@@ -104,7 +125,7 @@ describe("handleByokKeyFetch", () => {
 
   it("delivers the key exactly once, then deletes it (second fetch is 404)", async () => {
     const env = makeEnv();
-    await storeByokKey(env, "run-1", "sk-live-abcdef123456", "openai");
+    await storeByokKey(env, "run-1", "sk-live-abcdef123456", "openai", "gpt-5");
     await env.RELAY_KV.put("run:run-1", JSON.stringify({ status: "running" }));
 
     const req = () =>
@@ -117,6 +138,7 @@ describe("handleByokKeyFetch", () => {
     const firstBody = await first.json();
     expect(firstBody.apiKey).toBe("sk-live-abcdef123456");
     expect(firstBody.provider).toBe("openai");
+    expect(firstBody.model).toBe("gpt-5"); // Step 4: was never asserted, only apiKey/provider were
     expect(firstBody.deliveredAt).toBeTruthy();
 
     // Delivery-once: the ticket is gone even though its TTL hasn't expired.
