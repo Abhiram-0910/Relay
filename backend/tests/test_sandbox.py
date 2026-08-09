@@ -60,6 +60,32 @@ def test_missing_image_raises_actionable_error(monkeypatch) -> None:
         sandbox.run_in_sandbox(Path("/nonexistent"), {"base_url": OPEN_METEO_BASE_URL})
 
 
+def test_wall_clock_timeout_reports_status_timeout(monkeypatch) -> None:
+    """A container that runs past `timeout` is force-killed (subprocess.TimeoutExpired) — that's
+    STATUS_TIMEOUT now, distinct from STATUS_CALL_FAILED (Step 3: the corrector shouldn't burn an
+    attempt trying to "fix" the target API being slow)."""
+    monkeypatch.setattr(sandbox, "_image_exists", lambda image: True)
+    # Every docker control-plane call (network create/sidecar run/connect/inspect/logs/rm) goes
+    # through this helper — fake it so nothing real gets shelled out. "listening on" satisfies
+    # _wait_sidecar_ready's readiness check regardless of which call this stands in for.
+    monkeypatch.setattr(
+        sandbox, "_docker",
+        lambda *args, check=False: subprocess.CompletedProcess(args, 0, stdout="listening on\n", stderr=""),
+    )
+
+    def fake_run(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout", 0))
+
+    monkeypatch.setattr(sandbox.subprocess, "run", fake_run)
+
+    # Literal IP — resolve_and_validate_host runs for real but needs no actual DNS query.
+    report = sandbox.run_in_sandbox(Path("/nonexistent"), {"base_url": "https://8.8.8.8"}, timeout=1)
+
+    assert report["status"] == sandbox.STATUS_TIMEOUT, report
+    assert not report["verified_live"], report
+    assert not report["passed"], report
+
+
 # --- End-to-end: real generation + real container + real API -----------------------------------
 
 def _docker_and_image_available() -> bool:

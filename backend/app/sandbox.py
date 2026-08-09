@@ -48,6 +48,10 @@ STATUS_PASS = "verified_pass"
 STATUS_VALIDATION_FAILED = "verified_live_validation_failed"
 STATUS_CALL_FAILED = "call_failed"
 STATUS_SSRF_BLOCKED = "ssrf_blocked"
+# HOST-level wall-clock kill only (the whole container ran past `timeout` and was force-killed) —
+# distinct from an in-container request-level timeout, which runner.py still reports as
+# STATUS_CALL_FAILED (requests.Timeout is a requests.RequestException there; out of scope here).
+STATUS_TIMEOUT = "sandbox_timeout"
 # Statuses where a real HTTP call actually completed against the live target.
 _VERIFIED_LIVE = {STATUS_PASS, STATUS_VALIDATION_FAILED}
 
@@ -242,7 +246,7 @@ def run_in_sandbox(
                 # --rm cleans up on normal exit; a wall-clock kill leaves it, so force it.
                 _docker("rm", "-f", container)
                 return _report(
-                    STATUS_CALL_FAILED,
+                    STATUS_TIMEOUT,
                     f"wall-clock timeout after {timeout}s — container killed",
                     endpoint=endpoint, resolved_ip=resolved_ip,
                 )
