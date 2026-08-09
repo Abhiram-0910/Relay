@@ -318,5 +318,13 @@ if __name__ == "__main__":
     spec = os.environ.get("RELAY_SPEC_URL") or (sys.argv[1] if len(sys.argv) > 1 else None)
     if not spec:
         sys.exit("RELAY_SPEC_URL (or argv[1]) required")
-    outcome = run(spec)
+    try:
+        outcome = run(spec)
+    except Exception as exc:
+        # run() itself still raises on failure (unchanged — test_private_spec_url_rejected_before_
+        # any_fetch depends on that) and has already sent the classified code + full error_detail to
+        # the Worker/KV before doing so. This is only about what reaches the Action's OWN stdout/
+        # stderr, which — unlike KV — is a genuinely public log: never the raw exception or a
+        # traceback, just the same stable code a run's own record already carries.
+        sys.exit(f"FINAL: failed ({_classify_pipeline_error(exc)})")
     print("\nFINAL:", outcome["status"])
