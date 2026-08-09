@@ -52,6 +52,16 @@ const ERROR_MESSAGES: Record<string, string> = {
 // resource was exhausted, or the shared key itself is broken. Deliberately separate from
 // ERROR_MESSAGES: the message body is identical regardless of this flag, only whether the UI adds
 // an "or bring your own key" hint changes.
+//
+// Each entry only matters if something actually calls suggestsByok() with it — none of these ever
+// reach page.tsx's snapshot.error (that's exclusively pipeline codes; see run.error's producer,
+// ci_runner.py's _classify_pipeline_error, which never emits any of these three). Real call sites,
+// kept here so a future change to either can't silently orphan an entry again:
+//   - rate_limited        -> app/page.tsx, the rate-limit banner (RateLimitInfo.error)
+//   - quota_exhausted_shared,
+//     corrector_config_error -> components/ValidationReport.tsx, EndpointRow's terminal attempt
+//                                (attempt.status_after — the only two of the 7 corrector codes a
+//                                BYOK hint applies to)
 const BYOK_SUGGESTING_CODES = new Set(["rate_limited", "quota_exhausted_shared", "corrector_config_error"]);
 
 const FALLBACK_MESSAGE = "Something went wrong — try again shortly.";

@@ -1,8 +1,15 @@
 import { StatusBadge } from "@/components/StatusBadge";
-import { toneOf } from "@/lib/status";
+import { suggestsByok } from "@/lib/errors";
+import { labelOf, toneOf } from "@/lib/status";
 import type { RunResult, ValidatedEndpoint } from "@/lib/types";
 
 function EndpointRow({ v }: { v: ValidatedEndpoint }) {
+  const attempts = v.attempts ?? [];
+  // A corrector-level code (Step 3) can only ever be the LAST attempt's status_after: self_correct
+  // breaks the ladder immediately on a corrector exception, so no attempt follows one. Checking the
+  // last entry is checking the only entry that could ever hold one.
+  const lastAttempt = attempts[attempts.length - 1];
+
   return (
     <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -13,19 +20,22 @@ function EndpointRow({ v }: { v: ValidatedEndpoint }) {
         <StatusBadge status={v.status} />
       </div>
       {v.reason && <p className="mt-2 text-xs text-muted">{v.reason}</p>}
-      {v.attempts && v.attempts.length > 0 && (
+      {attempts.length > 0 && (
         <div className="mt-2 border-t border-white/5 pt-2">
           <p className="text-xs text-muted">
-            Self-corrected in {v.attempts.length} attempt{v.attempts.length > 1 ? "s" : ""}:
+            Self-corrected in {attempts.length} attempt{attempts.length > 1 ? "s" : ""}:
           </p>
           <ol className="mt-1 space-y-1">
-            {v.attempts.map((a, i) => (
+            {attempts.map((a, i) => (
               <li key={i} className="font-mono text-[11px] text-slate-400">
-                {a.model}: {a.status_before} → {a.status_after}
+                {a.model}: {labelOf(a.status_before)} → {labelOf(a.status_after)}
                 {a.changed_files.length > 0 && ` (patched ${a.changed_files.join(", ")})`}
               </li>
             ))}
           </ol>
+          {suggestsByok(lastAttempt.status_after) && (
+            <p className="mt-1 text-[11px] text-amber-300/80">Bring your own key to route around this.</p>
+          )}
         </div>
       )}
     </div>

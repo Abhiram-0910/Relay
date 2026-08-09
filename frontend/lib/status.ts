@@ -6,7 +6,8 @@
 //
 //   emerald (success)  -> verified_pass ONLY (and run-level "succeeded", i.e. all live-called passed)
 //   amber   (warn)     -> generated_only, verified_live_validation_failed, and in-progress states
-//   red     (danger)   -> call_failed, sandbox_timeout, failed, ssrf_blocked, rate_limited, error
+//   red     (danger)   -> call_failed, sandbox_timeout, failed, ssrf_blocked, rate_limited, error,
+//                         and the 7 corrector-level codes (Step 3) — all failure modes
 //   slate   (neutral)  -> anything unknown
 
 export type Tone = "success" | "warn" | "danger" | "neutral";
@@ -27,6 +28,16 @@ const TONE_BY_STATUS: Record<string, Tone> = {
   ssrf_blocked: "danger",
   rate_limited: "danger",
   error: "danger",
+  // danger — corrector-level codes (Step 3, correct.py's _classify_corrector_exception). Only ever
+  // appear in an attempt's status_after, never a run/endpoint status, but this map is the shared
+  // short-label vocabulary for any status-like token, so they belong here rather than duplicated.
+  corrector_auth_failed: "danger",
+  corrector_config_error: "danger",
+  quota_exhausted_shared: "danger",
+  quota_exhausted_byok: "danger",
+  corrector_network_error: "danger",
+  corrector_bad_response: "danger",
+  corrector_error: "danger",
 };
 
 // Literal Tailwind class strings so the content scanner can see them (no dynamic construction).
@@ -71,6 +82,13 @@ const LABELS: Record<string, string> = {
   failed: "Failed",
   rate_limited: "Daily limit reached",
   error: "Error",
+  corrector_auth_failed: "Key rejected",
+  corrector_config_error: "Auto-fix unavailable",
+  quota_exhausted_shared: "Free-tier limit",
+  quota_exhausted_byok: "Quota exhausted",
+  corrector_network_error: "Network error",
+  corrector_bad_response: "Bad response",
+  corrector_error: "Auto-fix failed",
 };
 
 export const toneOf = (status: string): Tone => TONE_BY_STATUS[status] ?? "neutral";

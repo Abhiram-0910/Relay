@@ -136,6 +136,7 @@ export default function Home() {
             free tier alive — nothing broke. Try again in about{" "}
             {Math.max(1, Math.round(rateLimit.retryAfter / 3600))} hour
             {Math.round(rateLimit.retryAfter / 3600) === 1 ? "" : "s"}.
+            {suggestsByok(rateLimit.error) && " Or bring your own key to skip this limit."}
           </p>
         </div>
       )}
