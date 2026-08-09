@@ -118,7 +118,7 @@ async function handleCreateRun(request, env) {
   await env.RELAY_KV.put(
     runKey(runId),
     JSON.stringify({ runId, status: "queued", stage: null, progress: null, result: null,
-                     error: null, updatedAt: now }),
+                     error: null, error_detail: null, updatedAt: now }),
     { expirationTtl: DAY_SECONDS }
   );
 
@@ -146,10 +146,14 @@ async function handleCreateRun(request, env) {
 }
 
 // GET /api/runs/:id — poll. Namespaced by runId, so concurrent visitors never cross.
+// error_detail (raw exception text, Step 3) is stored in KV but deliberately stripped here — this
+// is the one public, unauthenticated endpoint for a run's state, so "server-side only, no
+// disclosure UI yet" means it never leaves the Worker, not just "the UI doesn't render it."
 async function handleGetRun(env, runId) {
   const entry = await env.RELAY_KV.get(runKey(runId), "json");
   if (!entry) return json({ error: "not_found" }, 404, CORS);
-  return json(entry, 200, CORS);
+  const { error_detail, ...safe } = entry;
+  return json(safe, 200, CORS);
 }
 
 // POST /api/runs/:id/progress — Action callback. Auth by shared secret; Worker enforces the
@@ -186,6 +190,9 @@ async function handleProgress(request, env, runId) {
     progress: body.progress ?? existing.progress,
     result: body.result ?? existing.result,
     error: body.error ?? existing.error,
+    // error_detail: raw exception text (Step 3, ci_runner.py) -- stored for debugging, never
+    // returned by handleGetRun (stripped there, not here -- KV is the one place it's allowed to be).
+    error_detail: body.error_detail ?? existing.error_detail,
     updatedAt: now,
   };
   await env.RELAY_KV.put(runKey(runId), JSON.stringify(merged), { expirationTtl: DAY_SECONDS });

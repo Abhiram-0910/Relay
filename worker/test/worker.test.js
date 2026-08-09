@@ -173,6 +173,31 @@ describe("POST /api/runs/:id/progress", () => {
   });
 });
 
+describe("error_detail (Step 3): stored in KV, never returned by GET", () => {
+  it("stores error_detail from a progress callback but strips it from the polled response", async () => {
+    const env = makeEnv();
+    const runId = (await (await handle(req("POST", "/api/runs", { body: SPEC, headers: IP("5.5.5.5") }), env)).json()).runId;
+    const auth = { Authorization: "Bearer callback-secret" };
+
+    await handle(req("POST", `/api/runs/${runId}/progress`, {
+      body: { status: "failed", stage: "error", error: "spec_invalid",
+             error_detail: "OpenAPIValidationError: 'paths' is a required property" },
+      headers: auth,
+    }), env);
+
+    // Stored in KV (server-side reality) ...
+    const stored = await env.RELAY_KV.get(`run:${runId}`, "json");
+    expect(stored.error).toBe("spec_invalid");
+    expect(stored.error_detail).toContain("OpenAPIValidationError");
+
+    // ... but never returned by the public poll endpoint.
+    const polled = await (await handle(req("GET", `/api/runs/${runId}`), env)).json();
+    expect(polled.error).toBe("spec_invalid");
+    expect(polled.error_detail).toBeUndefined();
+    expect(JSON.stringify(polled)).not.toContain("OpenAPIValidationError");
+  });
+});
+
 describe("generated code (code:{runId})", () => {
   const auth = { Authorization: "Bearer callback-secret" };
   const filePayload = (content) => ({
