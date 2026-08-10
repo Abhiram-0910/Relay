@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { Banner } from "@/components/Banner";
 import { ByokFields } from "@/components/ByokFields";
 import { CodeViewer } from "@/components/CodeViewer";
 import { RunProgress } from "@/components/RunProgress";
@@ -129,24 +130,16 @@ export default function Home() {
       </form>
 
       {rateLimit && (
-        <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-4">
-          <StatusBadge status="rate_limited" />
-          <p className="mt-2 text-sm text-slate-300">
-            You&apos;ve used all {rateLimit.limit} free generations for today. This is a cap to keep the
-            free tier alive — nothing broke. Try again in about{" "}
-            {Math.max(1, Math.round(rateLimit.retryAfter / 3600))} hour
-            {Math.round(rateLimit.retryAfter / 3600) === 1 ? "" : "s"}.
-            {suggestsByok(rateLimit.error) && " Or bring your own key to skip this limit."}
-          </p>
-        </div>
+        <Banner status="rate_limited">
+          You&apos;ve used all {rateLimit.limit} free generations for today. This is a cap to keep the
+          free tier alive — nothing broke. Try again in about{" "}
+          {Math.max(1, Math.round(rateLimit.retryAfter / 3600))} hour
+          {Math.round(rateLimit.retryAfter / 3600) === 1 ? "" : "s"}.
+          {suggestsByok(rateLimit.error) && " Or bring your own key to skip this limit."}
+        </Banner>
       )}
 
-      {errorMsg && (
-        <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-4">
-          <StatusBadge status="error" />
-          <p className="mt-2 text-sm text-slate-300">{errorMsg}</p>
-        </div>
-      )}
+      {errorMsg && <Banner status="error">{errorMsg}</Banner>}
 
       {snapshot && (phase === "polling" || phase === "done") && (
         <section className="space-y-5 rounded-xl border border-white/10 bg-white/[0.03] p-5 backdrop-blur">
@@ -164,10 +157,10 @@ export default function Home() {
           {phase === "polling" && <RunProgress snapshot={snapshot} />}
 
           {snapshot.status === "failed" && snapshot.error && (
-            <p className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-sm text-slate-300">
+            <Banner status={snapshot.error}>
               {errorMessage(snapshot.error)}
               {suggestsByok(snapshot.error) && " You can also bring your own key to avoid this limit."}
-            </p>
+            </Banner>
           )}
 
           {phase === "done" && snapshot.result && (

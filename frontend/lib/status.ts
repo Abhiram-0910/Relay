@@ -38,33 +38,48 @@ const TONE_BY_STATUS: Record<string, Tone> = {
   corrector_network_error: "danger",
   corrector_bad_response: "danger",
   corrector_error: "danger",
+  // danger — pipeline-level codes (Step 3, ci_runner.py's _classify_pipeline_error). Only ever
+  // appear as run.error. Step 5: giving the run-failed banner a StatusBadge surfaced that these had
+  // never been mapped — errors.ts had full-sentence messages for them, but no short label/tone.
+  spec_fetch_failed: "danger",
+  spec_invalid: "danger",
+  ssrf_blocked_spec: "danger",
+  generation_failed: "danger",
+  sandbox_unavailable: "danger",
+  internal_error: "danger",
 };
 
 // Literal Tailwind class strings so the content scanner can see them (no dynamic construction).
-const TONE_CLASSES: Record<Tone, { badge: string; dot: string; text: string; border: string }> = {
+// `surface`: background tint for a full banner/panel (Step 5's <Banner>), distinct from `badge`
+// (a small pill) — same tone, different-sized consumer, same SSOT rule: never hardcode a color.
+const TONE_CLASSES: Record<Tone, { badge: string; dot: string; text: string; border: string; surface: string }> = {
   success: {
     badge: "bg-emerald-500/10 text-emerald-300 border-emerald-500/30",
     dot: "bg-emerald-400",
     text: "text-emerald-300",
     border: "border-emerald-500/40",
+    surface: "bg-emerald-500/5",
   },
   warn: {
     badge: "bg-amber-500/10 text-amber-300 border-amber-500/30",
     dot: "bg-amber-400",
     text: "text-amber-300",
     border: "border-amber-500/40",
+    surface: "bg-amber-500/5",
   },
   danger: {
     badge: "bg-red-500/10 text-red-300 border-red-500/30",
     dot: "bg-red-400",
     text: "text-red-300",
     border: "border-red-500/40",
+    surface: "bg-red-500/5",
   },
   neutral: {
     badge: "bg-slate-500/10 text-slate-300 border-slate-500/30",
     dot: "bg-slate-400",
     text: "text-slate-300",
     border: "border-slate-500/40",
+    surface: "bg-slate-500/5",
   },
 };
 
@@ -89,6 +104,12 @@ const LABELS: Record<string, string> = {
   corrector_network_error: "Network error",
   corrector_bad_response: "Bad response",
   corrector_error: "Auto-fix failed",
+  spec_fetch_failed: "Fetch failed",
+  spec_invalid: "Invalid spec",
+  ssrf_blocked_spec: "Blocked (SSRF)",
+  generation_failed: "Generation failed",
+  sandbox_unavailable: "Unavailable",
+  internal_error: "Internal error",
 };
 
 export const toneOf = (status: string): Tone => TONE_BY_STATUS[status] ?? "neutral";
