@@ -1,6 +1,6 @@
 import { StatusBadge } from "@/components/StatusBadge";
 import { suggestsByok } from "@/lib/errors";
-import { labelOf, toneOf } from "@/lib/status";
+import { labelOf, styleOf, toneOf } from "@/lib/status";
 import type { RunResult, ValidatedEndpoint } from "@/lib/types";
 
 function EndpointRow({ v }: { v: ValidatedEndpoint }) {
@@ -27,14 +27,15 @@ function EndpointRow({ v }: { v: ValidatedEndpoint }) {
           </p>
           <ol className="mt-1 space-y-1">
             {attempts.map((a, i) => (
-              <li key={i} className="font-mono text-[11px] text-slate-400">
-                {a.model}: {labelOf(a.status_before)} → {labelOf(a.status_after)}
+              <li key={i} className="font-mono text-xs text-slate-400">
+                {a.model}: {labelOf(a.status_before)} →{" "}
+                <span className={styleOf(a.status_after).text}>{labelOf(a.status_after)}</span>
                 {a.changed_files.length > 0 && ` (patched ${a.changed_files.join(", ")})`}
               </li>
             ))}
           </ol>
           {suggestsByok(lastAttempt.status_after) && (
-            <p className="mt-1 text-[11px] text-amber-300/80">Bring your own key to route around this.</p>
+            <p className="mt-1 text-xs text-amber-300">Bring your own key to route around this.</p>
           )}
         </div>
       )}
