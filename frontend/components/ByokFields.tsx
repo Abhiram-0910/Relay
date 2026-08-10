@@ -29,6 +29,7 @@ export function ByokFields({ value, onChange, disabled }: Props) {
   const [models, setModels] = useState<ModelOption[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showKey, setShowKey] = useState(false);
 
   // Only touches stable setters + its args, so one debounced copy for the component's lifetime.
   const loadModels = useCallback(async (provider: string, apiKey: string) => {
@@ -62,10 +63,17 @@ export function ByokFields({ value, onChange, disabled }: Props) {
   }, [value.provider, value.apiKey, debouncedLoad]);
 
   return (
-    <details className="rounded-lg border border-line bg-white/[0.02]">
-      <summary className="cursor-pointer select-none px-3 py-2.5 text-sm text-slate-300">
-        Use your own API key{" "}
-        <span className="text-muted">(optional — otherwise the shared free tier is used)</span>
+    <details className="group rounded-lg border border-line bg-white/[0.02]">
+      <summary className="flex cursor-pointer select-none items-center justify-between gap-2 px-3 py-2.5 text-sm text-slate-300 marker:hidden [&::-webkit-details-marker]:hidden">
+        <span>
+          Use your own API key{" "}
+          <span className="text-muted">(optional — otherwise the shared free tier is used)</span>
+        </span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75"
+             className="h-4 w-4 shrink-0 text-muted transition-transform duration-200 group-open:rotate-90"
+             aria-hidden="true">
+          <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
       </summary>
 
       <div className="space-y-3 border-t border-line p-3">
@@ -93,26 +101,58 @@ export function ByokFields({ value, onChange, disabled }: Props) {
           <label htmlFor="byok-key" className="block text-xs font-medium text-slate-400">
             API key
           </label>
-          <input
-            id="byok-key"
-            type="password"
-            autoComplete="off"
-            spellCheck={false}
-            value={value.apiKey}
-            disabled={disabled || !value.provider}
-            onChange={(e) => onChange({ ...value, apiKey: e.target.value, model: "" })}
-            placeholder="Your provider API key"
-            className={`${INPUT_CLASS} font-mono`}
-          />
+          <div className="relative">
+            <input
+              id="byok-key"
+              type={showKey ? "text" : "password"}
+              autoComplete="off"
+              spellCheck={false}
+              value={value.apiKey}
+              disabled={disabled || !value.provider}
+              onChange={(e) => onChange({ ...value, apiKey: e.target.value, model: "" })}
+              placeholder="Your provider API key"
+              className={`${INPUT_CLASS} pr-10 font-mono`}
+            />
+            <button
+              type="button"
+              onClick={() => setShowKey((s) => !s)}
+              disabled={disabled || !value.provider}
+              aria-label={showKey ? "Hide API key" : "Show API key"}
+              aria-pressed={showKey}
+              className="absolute inset-y-0 right-0 flex w-10 cursor-pointer items-center justify-center text-muted transition hover:text-slate-300 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {showKey ? (
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-4 w-4" aria-hidden="true">
+                  <path d="M3 3l18 18" strokeLinecap="round" />
+                  <path d="M10.6 5.1A9.5 9.5 0 0 1 12 5c6 0 9.5 7 9.5 7a14.6 14.6 0 0 1-3.3 4.2M6.5 6.5C4 8.3 2.5 12 2.5 12S6 19 12 19a9.6 9.6 0 0 0 3-.5"
+                        strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M9.5 9.9a3 3 0 0 0 4.2 4.2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-4 w-4" aria-hidden="true">
+                  <path d="M2.5 12S6 5 12 5s9.5 7 9.5 7-3.5 7-9.5 7S2.5 12 2.5 12Z" strokeLinecap="round" strokeLinejoin="round" />
+                  <circle cx="12" cy="12" r="3" />
+                </svg>
+              )}
+            </button>
+          </div>
           <p className="text-xs text-muted">
             Used once for this run, then deleted — never stored. Sent only to your chosen provider.
           </p>
         </div>
 
         <div className="space-y-1.5">
-          <label htmlFor="byok-model" className="block text-xs font-medium text-slate-400">
-            Model
-          </label>
+          <div className="flex items-center gap-1.5">
+            <label htmlFor="byok-model" className="block text-xs font-medium text-slate-400">
+              Model
+            </label>
+            {loading && (
+              <svg viewBox="0 0 24 24" fill="none" className="h-3 w-3 animate-spin text-muted" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" strokeOpacity="0.25" />
+                <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+            )}
+          </div>
           <select
             id="byok-model"
             value={value.model}

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildRunPayload,
-  byokReceiptText,
+  byokReceiptSummary,
   canFetchModels,
   KeyRejectedError,
   modelErrorMessage,
@@ -64,17 +64,26 @@ describe("modelErrorMessage — a rejected key is called out, not left silent", 
   });
 });
 
-describe("byokReceiptText — only shown once both timestamps are present", () => {
+describe("byokReceiptSummary — only shown once both timestamps are present", () => {
   it("returns null until both byokReceivedAt and byokDeletedAt exist", () => {
-    expect(byokReceiptText({})).toBeNull();
-    expect(byokReceiptText({ byokReceivedAt: "t1" })).toBeNull();
-    expect(byokReceiptText({ byokDeletedAt: "t2" })).toBeNull();
+    expect(byokReceiptSummary({})).toBeNull();
+    expect(byokReceiptSummary({ byokReceivedAt: "t1" })).toBeNull();
+    expect(byokReceiptSummary({ byokDeletedAt: "t2" })).toBeNull();
   });
 
-  it("renders the honest received/used-once/deleted line when both are present", () => {
-    const text = byokReceiptText({ byokReceivedAt: "2026-08-01T10:00:00Z", byokDeletedAt: "2026-08-01T10:00:30Z" });
-    expect(text).toContain("2026-08-01T10:00:00Z");
-    expect(text).toContain("2026-08-01T10:00:30Z");
-    expect(text).toContain("used once");
+  it("leads with a human duration, not raw timestamps, but keeps the exact ISO strings for a tooltip", () => {
+    const summary = byokReceiptSummary({ byokReceivedAt: "2026-08-01T10:00:00Z", byokDeletedAt: "2026-08-01T10:00:30Z" });
+    expect(summary?.text).toContain("30 seconds");
+    expect(summary?.text).toContain("used once");
+    expect(summary?.text).not.toContain("2026-08-01T10:00:00Z"); // the point: not a raw-timestamp wall of text
+    expect(summary?.receivedAt).toBe("2026-08-01T10:00:00Z"); // ...but the precision isn't lost, just relocated
+    expect(summary?.deletedAt).toBe("2026-08-01T10:00:30Z");
+  });
+
+  it("formats sub-second gaps and minute-scale gaps sensibly", () => {
+    const instant = byokReceiptSummary({ byokReceivedAt: "2026-08-01T10:00:00.000Z", byokDeletedAt: "2026-08-01T10:00:00.400Z" });
+    expect(instant?.text).toContain("under a second");
+    const minute = byokReceiptSummary({ byokReceivedAt: "2026-08-01T10:00:00Z", byokDeletedAt: "2026-08-01T10:02:00Z" });
+    expect(minute?.text).toContain("2 minutes");
   });
 });

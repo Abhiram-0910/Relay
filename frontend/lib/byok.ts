@@ -68,11 +68,33 @@ export function modelErrorMessage(err: unknown): string {
   return "Couldn’t load models. Check your connection and try again.";
 }
 
-/** The honest, Worker-verified BYOK receipt — rendered only once BOTH timestamps are present on the
- * run record (real data off the Worker's KV state, not copy). */
-export function byokReceiptText(
+/** Human duration between two ISO timestamps — "under a second", "34 seconds", "2 minutes". The
+ * receipt's actual trust signal is HOW BRIEFLY the key existed, not how long ago that was (which
+ * goes stale the moment it's displayed) — so this formats a gap, never a "time ago". */
+function formatGap(fromIso: string, toIso: string): string | null {
+  const from = Date.parse(fromIso);
+  const to = Date.parse(toIso);
+  if (!Number.isFinite(from) || !Number.isFinite(to)) return null;
+  const ms = Math.max(0, to - from);
+  if (ms < 1000) return "under a second";
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) return `${seconds} second${seconds === 1 ? "" : "s"}`;
+  const minutes = Math.round(seconds / 60);
+  return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+}
+
+/** The honest, Worker-verified BYOK receipt — only once BOTH timestamps are present on the run
+ * record (real data off the Worker's KV state, not copy). `text` leads with the human-readable
+ * duration; `receivedAt`/`deletedAt` are the exact ISO timestamps, for the UI to show as a tooltip
+ * rather than dropping the precision the honesty guarantee depends on. */
+export function byokReceiptSummary(
   snapshot: Pick<RunSnapshot, "byokReceivedAt" | "byokDeletedAt">,
-): string | null {
-  if (!snapshot.byokReceivedAt || !snapshot.byokDeletedAt) return null;
-  return `Your key was received at ${snapshot.byokReceivedAt}, used once, and deleted at ${snapshot.byokDeletedAt}.`;
+): { text: string; receivedAt: string; deletedAt: string } | null {
+  const { byokReceivedAt: receivedAt, byokDeletedAt: deletedAt } = snapshot;
+  if (!receivedAt || !deletedAt) return null;
+  const gap = formatGap(receivedAt, deletedAt);
+  const text = gap
+    ? `Your key was received, used once, and deleted ${gap} later — never stored.`
+    : `Your key was received, used once, and deleted — never stored.`;
+  return { text, receivedAt, deletedAt };
 }

@@ -9,7 +9,7 @@ import { RunProgress } from "@/components/RunProgress";
 import { StatusBadge } from "@/components/StatusBadge";
 import { ValidationReport } from "@/components/ValidationReport";
 import { createRun, getRun, RateLimitedError } from "@/lib/api";
-import { byokReceiptText, EMPTY_BYOK, type ByokState } from "@/lib/byok";
+import { byokReceiptSummary, EMPTY_BYOK, type ByokState } from "@/lib/byok";
 import { errorMessage, suggestsByok } from "@/lib/errors";
 import type { RateLimitInfo, RunSnapshot } from "@/lib/types";
 
@@ -90,6 +90,7 @@ export default function Home() {
   }, [phase, runId]);
 
   const busy = phase === "creating" || phase === "polling";
+  const byokReceipt = snapshot ? byokReceiptSummary(snapshot) : null;
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-2xl flex-col gap-8 px-5 py-16 sm:py-24">
@@ -148,9 +149,17 @@ export default function Home() {
             <StatusBadge status={snapshot.status} pulse={phase === "polling"} />
           </div>
 
-          {byokReceiptText(snapshot) && (
-            <p className="rounded-lg border border-emerald-500/20 bg-emerald-500/[0.04] p-3 text-xs text-emerald-200/90">
-              {byokReceiptText(snapshot)}
+          {byokReceipt && (
+            <p
+              className="flex items-start gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/[0.04] p-3 text-xs text-emerald-200"
+              title={`Received ${byokReceipt.receivedAt} · Deleted ${byokReceipt.deletedAt}`}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"
+                   className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true">
+                <rect x="4.5" y="10.5" width="15" height="10" rx="2" />
+                <path d="M8 10.5V7a4 4 0 0 1 8 0v3.5" />
+              </svg>
+              <span>{byokReceipt.text}</span>
             </p>
           )}
 
