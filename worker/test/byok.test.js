@@ -4,6 +4,7 @@ import {
   storeByokKey,
   buildDispatchInputs,
   handleByokKeyFetch,
+  isAuthorizedCallback,
 } from "../src/byok.js";
 
 // Minimal fake KV matching the subset of the Workers KV API this module
@@ -112,6 +113,20 @@ describe("handleByokKeyFetch", () => {
     expect(await env.RELAY_KV.get("byok:run-1")).not.toBeNull(); // untouched
   });
 
+  // Step 6 security review (F3): this route — the one returning a user's plaintext BYOK key —
+  // had drifted from its siblings and skipped the "!env.CALLBACK_SECRET" presence check, so an
+  // unset secret binding made `Bearer ${undefined}` a literal string any caller could send.
+  it("fails CLOSED when CALLBACK_SECRET is unset, even with a caller matching the literal string", async () => {
+    const env = { RELAY_KV: new FakeKV(), CALLBACK_SECRET: undefined };
+    await storeByokKey(env, "run-1", "sk-live-abcdef123456", "openai");
+    const req = new Request("https://worker.example/api/runs/run-1/byok-key", {
+      headers: { Authorization: "Bearer undefined" },
+    });
+    const res = await handleByokKeyFetch(req, env, "run-1");
+    expect(res.status).toBe(401);
+    expect(await env.RELAY_KV.get("byok:run-1")).not.toBeNull(); // untouched
+  });
+
   it("returns 404 when no key was ever stored for this run", async () => {
     const env = makeEnv();
     const req = new Request("https://worker.example/api/runs/run-1/byok-key", {
@@ -163,5 +178,20 @@ describe("handleByokKeyFetch", () => {
     expect(run.byokDeletedAt).toBeTruthy();
     expect(run.apiKey).toBeUndefined();
     expect(JSON.stringify(run)).not.toContain("sk-live-abcdef123456");
+  });
+});
+
+describe("isAuthorizedCallback — shared by every Action-only route (Step 6, F3)", () => {
+  const req = (bearer) => new Request("https://worker.example/x", { headers: { Authorization: bearer } });
+
+  it("true only with the exact correct bearer token", () => {
+    expect(isAuthorizedCallback(req("Bearer secret"), { CALLBACK_SECRET: "secret" })).toBe(true);
+    expect(isAuthorizedCallback(req("Bearer wrong"), { CALLBACK_SECRET: "secret" })).toBe(false);
+  });
+
+  it("false when CALLBACK_SECRET is unset/empty, regardless of what the caller sends", () => {
+    expect(isAuthorizedCallback(req("Bearer undefined"), { CALLBACK_SECRET: undefined })).toBe(false);
+    expect(isAuthorizedCallback(req("Bearer "), { CALLBACK_SECRET: "" })).toBe(false);
+    expect(isAuthorizedCallback(req(""), {})).toBe(false);
   });
 });

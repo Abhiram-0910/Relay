@@ -30,6 +30,21 @@ const BYOK_TTL_SECONDS = 240; // KV minimum is 60s. Was 120s, but a genuinely
                                // on first read), not a stored secret.
 
 /**
+ * Shared Bearer-CALLBACK_SECRET check for every Action-only callback route (this file's
+ * handleByokKeyFetch, and index.js's handleProgress/handleStoreCode). Fails CLOSED on a missing
+ * secret: `!env.CALLBACK_SECRET` is checked explicitly rather than relying on the string
+ * comparison alone, because an unset secret makes `` `Bearer ${env.CALLBACK_SECRET}` `` the
+ * literal "Bearer undefined" — a value any caller can send. Step 6 security review (F3): this
+ * file's own handleByokKeyFetch — the one route that returns a user's plaintext BYOK key — had
+ * diverged from its two siblings and skipped this check. One shared helper so a future handler
+ * can't repeat that divergence.
+ */
+export function isAuthorizedCallback(request, env) {
+  const auth = request.headers.get("Authorization") || "";
+  return Boolean(env.CALLBACK_SECRET) && auth === `Bearer ${env.CALLBACK_SECRET}`;
+}
+
+/**
  * Call from the POST /api/runs handler, after runId is minted, before
  * building workflow_dispatch inputs. No-ops (returns false) if no apiKey was
  * supplied on this run — most runs won't have one, and that's fine.
@@ -83,8 +98,7 @@ export function buildDispatchInputs(runId, specUrl, callbackUrl, hasByok) {
  * meant to be indistinguishable, since both mean "the key is gone."
  */
 export async function handleByokKeyFetch(request, env, runId) {
-  const auth = request.headers.get("Authorization") || "";
-  if (auth !== `Bearer ${env.CALLBACK_SECRET}`) {
+  if (!isAuthorizedCallback(request, env)) {
     return new Response(JSON.stringify({ error: "unauthorized" }), {
       status: 401,
       headers: { "Content-Type": "application/json" },

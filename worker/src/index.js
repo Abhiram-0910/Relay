@@ -16,7 +16,7 @@
  *   (the Action's built-in GITHUB_TOKEN is NOT used here — wrong audience.)
  */
 
-import { storeByokKey, buildDispatchInputs, handleByokKeyFetch } from "./byok.js";
+import { storeByokKey, buildDispatchInputs, handleByokKeyFetch, isAuthorizedCallback } from "./byok.js";
 import { handleModelsFetch } from "./models.js";
 
 const DAY_SECONDS = 86400;
@@ -159,8 +159,7 @@ async function handleGetRun(env, runId) {
 // POST /api/runs/:id/progress — Action callback. Auth by shared secret; Worker enforces the
 // KV write-rate throttle itself, so a buggy/retrying reporter can't blow the write budget.
 async function handleProgress(request, env, runId) {
-  const auth = request.headers.get("Authorization") || "";
-  if (!env.CALLBACK_SECRET || auth !== `Bearer ${env.CALLBACK_SECRET}`) {
+  if (!isAuthorizedCallback(request, env)) {
     return json({ error: "unauthorized" }, 401);
   }
   let body;
@@ -230,8 +229,7 @@ function guardCode(payload) {
 
 // POST /api/runs/:id/code — Action callback (Bearer CALLBACK_SECRET). Stores the guarded code.
 async function handleStoreCode(request, env, runId) {
-  const auth = request.headers.get("Authorization") || "";
-  if (!env.CALLBACK_SECRET || auth !== `Bearer ${env.CALLBACK_SECRET}`) {
+  if (!isAuthorizedCallback(request, env)) {
     return json({ error: "unauthorized" }, 401);
   }
   let body;
