@@ -30,12 +30,22 @@ Keep this updated as the project evolves.
 relay/
 ├── backend/
 │   ├── app/
-│   │   ├── main.py        # FastAPI app, routes
-│   │   └── ...             # generation, sandbox, jobs modules land here as built
+│   │   ├── generate.py     # deterministic model+client generation (Jinja2)
+│   │   ├── sandbox.py      # Docker sandbox runner + SSRF guard
+│   │   ├── correct.py      # Gemini/OpenAI/Anthropic/Grok/OpenRouter self-correction
+│   │   ├── ci_runner.py    # pipeline entry point: parse → generate → sandbox → correct
+│   │   └── byok.py         # BYOK key handling helpers
 │   ├── tests/
 │   ├── requirements.txt
 │   └── venv/               # gitignored
-├── frontend/                # not started yet
+├── worker/                 # Cloudflare Worker: trigger + KV state + rate limiting
+│   └── src/
+│       ├── index.js
+│       ├── byok.js
+│       ├── models.js
+│       └── rateLimit.js
+├── frontend/                # Next.js 14 + Tailwind, deployed on Vercel
+├── .github/workflows/generate.yml   # GitHub Action invoking ci_runner.py
 ├── CLAUDE.md
 ├── AGENTS.md
 ├── ARCHITECTURE.md
