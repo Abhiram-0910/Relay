@@ -181,17 +181,17 @@ describe("handleByokKeyFetch", () => {
   });
 });
 
-describe("isAuthorizedCallback — shared by every Action-only route (Step 6, F3)", () => {
+describe("isAuthorizedCallback — shared by every Action-only route (Step 6, F3/F8)", () => {
   const req = (bearer) => new Request("https://worker.example/x", { headers: { Authorization: bearer } });
 
-  it("true only with the exact correct bearer token", () => {
-    expect(isAuthorizedCallback(req("Bearer secret"), { CALLBACK_SECRET: "secret" })).toBe(true);
-    expect(isAuthorizedCallback(req("Bearer wrong"), { CALLBACK_SECRET: "secret" })).toBe(false);
+  it("true only with the exact correct bearer token", async () => {
+    expect(await isAuthorizedCallback(req("Bearer secret"), { CALLBACK_SECRET: "secret" })).toBe(true);
+    expect(await isAuthorizedCallback(req("Bearer wrong"), { CALLBACK_SECRET: "secret" })).toBe(false);
   });
 
-  it("false when CALLBACK_SECRET is unset/empty, regardless of what the caller sends", () => {
-    expect(isAuthorizedCallback(req("Bearer undefined"), { CALLBACK_SECRET: undefined })).toBe(false);
-    expect(isAuthorizedCallback(req("Bearer "), { CALLBACK_SECRET: "" })).toBe(false);
-    expect(isAuthorizedCallback(req(""), {})).toBe(false);
+  it("false when CALLBACK_SECRET is unset/empty, regardless of what the caller sends", async () => {
+    expect(await isAuthorizedCallback(req("Bearer undefined"), { CALLBACK_SECRET: undefined })).toBe(false);
+    expect(await isAuthorizedCallback(req("Bearer "), { CALLBACK_SECRET: "" })).toBe(false);
+    expect(await isAuthorizedCallback(req(""), {})).toBe(false);
   });
 });

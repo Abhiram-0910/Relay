@@ -30,6 +30,27 @@ const BYOK_TTL_SECONDS = 240; // KV minimum is 60s. Was 120s, but a genuinely
                                // on first read), not a stored secret.
 
 /**
+ * Constant-time string comparison via digest — Workers has no crypto.timingSafeEqual, so this is
+ * the standard substitute: hash both sides (any single differing bit scrambles the whole digest,
+ * so comparing digests leaks nothing incremental about *where* two secrets first differ) and
+ * compare the fixed-length digest bytes. Step 6 security review (F8).
+ */
+async function timingSafeEqual(a, b) {
+  const enc = new TextEncoder();
+  const [digestA, digestB] = await Promise.all([
+    crypto.subtle.digest("SHA-256", enc.encode(a)),
+    crypto.subtle.digest("SHA-256", enc.encode(b)),
+  ]);
+  const bytesA = new Uint8Array(digestA);
+  const bytesB = new Uint8Array(digestB);
+  let diff = bytesA.length ^ bytesB.length;
+  for (let i = 0; i < Math.max(bytesA.length, bytesB.length); i++) {
+    diff |= (bytesA[i] ?? 0) ^ (bytesB[i] ?? 0); // touch every position regardless of length
+  }
+  return diff === 0;
+}
+
+/**
  * Shared Bearer-CALLBACK_SECRET check for every Action-only callback route (this file's
  * handleByokKeyFetch, and index.js's handleProgress/handleStoreCode). Fails CLOSED on a missing
  * secret: `!env.CALLBACK_SECRET` is checked explicitly rather than relying on the string
@@ -37,11 +58,13 @@ const BYOK_TTL_SECONDS = 240; // KV minimum is 60s. Was 120s, but a genuinely
  * literal "Bearer undefined" — a value any caller can send. Step 6 security review (F3): this
  * file's own handleByokKeyFetch — the one route that returns a user's plaintext BYOK key — had
  * diverged from its two siblings and skipped this check. One shared helper so a future handler
- * can't repeat that divergence.
+ * can't repeat that divergence. Also F8: the comparison itself is constant-time now, closing the
+ * one shared choke point instead of three separately hand-written `!==` comparisons.
  */
-export function isAuthorizedCallback(request, env) {
+export async function isAuthorizedCallback(request, env) {
+  if (!env.CALLBACK_SECRET) return false;
   const auth = request.headers.get("Authorization") || "";
-  return Boolean(env.CALLBACK_SECRET) && auth === `Bearer ${env.CALLBACK_SECRET}`;
+  return timingSafeEqual(auth, `Bearer ${env.CALLBACK_SECRET}`);
 }
 
 /**
@@ -98,7 +121,7 @@ export function buildDispatchInputs(runId, specUrl, callbackUrl, hasByok) {
  * meant to be indistinguishable, since both mean "the key is gone."
  */
 export async function handleByokKeyFetch(request, env, runId) {
-  if (!isAuthorizedCallback(request, env)) {
+  if (!(await isAuthorizedCallback(request, env))) {
     return new Response(JSON.stringify({ error: "unauthorized" }), {
       status: 401,
       headers: { "Content-Type": "application/json" },

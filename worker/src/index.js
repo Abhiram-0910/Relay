@@ -159,7 +159,7 @@ async function handleGetRun(env, runId) {
 // POST /api/runs/:id/progress — Action callback. Auth by shared secret; Worker enforces the
 // KV write-rate throttle itself, so a buggy/retrying reporter can't blow the write budget.
 async function handleProgress(request, env, runId) {
-  if (!isAuthorizedCallback(request, env)) {
+  if (!(await isAuthorizedCallback(request, env))) {
     return json({ error: "unauthorized" }, 401);
   }
   let body;
@@ -229,7 +229,7 @@ function guardCode(payload) {
 
 // POST /api/runs/:id/code — Action callback (Bearer CALLBACK_SECRET). Stores the guarded code.
 async function handleStoreCode(request, env, runId) {
-  if (!isAuthorizedCallback(request, env)) {
+  if (!(await isAuthorizedCallback(request, env))) {
     return json({ error: "unauthorized" }, 401);
   }
   let body;
