@@ -203,7 +203,7 @@ def test_run_reports_generation_failed_code(monkeypatch) -> None:
     from unittest.mock import MagicMock
 
     monkeypatch.setattr(ci_runner, "resolve_and_validate_host", lambda url: "8.8.8.8")
-    fake_resp = MagicMock(text=_MINIMAL_VALID_SPEC)
+    fake_resp = MagicMock(text=_MINIMAL_VALID_SPEC, is_redirect=False)
     fake_resp.raise_for_status.return_value = None
     monkeypatch.setattr(ci_runner.requests, "get", lambda *a, **k: fake_resp)
 
@@ -220,3 +220,76 @@ def test_run_reports_generation_failed_code(monkeypatch) -> None:
     assert len(failed) == 1
     assert failed[0]["error"] == "generation_failed"
     assert "template blew up" in failed[0]["error_detail"]
+
+
+# --- Step 6 security review (F2): redirects must be re-validated per hop, not trusted blindly ---
+
+def test_redirect_safe_get_follows_a_redirect_to_a_still_valid_host(monkeypatch) -> None:
+    from unittest.mock import MagicMock
+
+    calls = []
+
+    def fake_get(url, *, timeout, allow_redirects):
+        assert allow_redirects is False  # never delegate redirect-following to requests itself
+        calls.append(url)
+        if url == "https://a.example/spec":
+            return MagicMock(is_redirect=True, headers={"location": "https://b.example/real-spec"})
+        return MagicMock(is_redirect=False, status_code=200, headers={})
+
+    monkeypatch.setattr(ci_runner.requests, "get", fake_get)
+    monkeypatch.setattr(ci_runner, "resolve_and_validate_host", lambda url: "8.8.8.8")
+
+    resp = ci_runner._redirect_safe_get("https://a.example/spec", timeout=5)
+    assert calls == ["https://a.example/spec", "https://b.example/real-spec"]
+    assert resp.is_redirect is False
+
+
+def test_redirect_safe_get_revalidates_the_redirect_target_not_just_the_original_url(monkeypatch) -> None:
+    """The whole point of the fix: a host that passes the check can no longer redirect to a
+    private/metadata target with zero further validation."""
+    from unittest.mock import MagicMock
+
+    def fake_get(url, *, timeout, allow_redirects):
+        return MagicMock(is_redirect=True, headers={"location": "http://169.254.169.254/latest/meta-data/"})
+
+    def fake_resolve(url):
+        if "169.254.169.254" in url:
+            raise SSRFError(f"private target: {url}")
+        return "8.8.8.8"
+
+    monkeypatch.setattr(ci_runner.requests, "get", fake_get)
+    monkeypatch.setattr(ci_runner, "resolve_and_validate_host", fake_resolve)
+
+    with pytest.raises(SSRFError, match="private target"):
+        ci_runner._redirect_safe_get("https://a.example/spec", timeout=5)
+
+
+def test_redirect_safe_get_bounds_the_redirect_chain(monkeypatch) -> None:
+    from unittest.mock import MagicMock
+
+    monkeypatch.setattr(ci_runner, "resolve_and_validate_host", lambda url: "8.8.8.8")
+    monkeypatch.setattr(
+        ci_runner.requests, "get",
+        lambda url, **k: MagicMock(is_redirect=True, headers={"location": url + "x"}),  # never terminates
+    )
+    with pytest.raises(SSRFError, match="too many redirects"):
+        ci_runner._redirect_safe_get("https://a.example/spec", timeout=5)
+
+
+def test_ref_fetch_uses_the_same_redirect_safe_get_as_the_primary_spec_fetch(monkeypatch) -> None:
+    """guarded_prance_resolve's http(s) $ref fetch must go through _redirect_safe_get, not
+    prance's own bare requests.get (which follows redirects with no host check at all)."""
+    from unittest.mock import MagicMock
+
+    calls = []
+
+    def fake_redirect_safe_get(url, *, timeout):
+        calls.append(url)
+        return MagicMock(ok=True, text="shared: content", headers={"content-type": "text/plain"})
+
+    monkeypatch.setattr(ci_runner, "_redirect_safe_get", fake_redirect_safe_get)
+    parsed = urlsplit("https://example.com/shared.yaml")
+
+    content, content_type = ci_runner._safe_ref_fetch_url_text(parsed, cache={})
+    assert content == "shared: content"
+    assert calls == ["https://example.com/shared.yaml"]

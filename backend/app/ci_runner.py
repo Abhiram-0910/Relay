@@ -34,10 +34,37 @@ from prance import ValidationError as PranceValidationError
 from prance.util.formats import ParseError as PranceParseError
 from prance.util.url import ResolutionError as PranceResolutionError
 
+from urllib.parse import urljoin
+
 from app.byok import run_with_optional_byok
 from app.correct import self_correct
 from app.generate import generate_all_endpoints
 from app.sandbox import STATUS_PASS, SandboxError, SSRFError, resolve_and_validate_host, run_in_sandbox
+
+# SECURITY (Step 6, F2): resolve_and_validate_host only checks the URL it's given. `requests.get`
+# follows redirects by default and re-resolves DNS on every hop with NO host check of its own --
+# so a spec/ref host that passes the check can redirect (or DNS-rebind) to a private/metadata
+# target with zero further validation, defeating the whole point of the check. This bounded,
+# re-validated-per-hop fetch is used for BOTH the spec_url fetch below and the $ref fetches
+# guarded_prance_resolve gates. The DNS-rebinding half of this (a public host's DNS record
+# changing between check and connect, no redirect involved) is a separate, narrower, already-
+# accepted residual — see ARCHITECTURE.md.
+_MAX_REDIRECTS = 5
+
+
+def _redirect_safe_get(url: str, *, timeout: float) -> requests.Response:
+    """GET url, re-running resolve_and_validate_host on every redirect hop instead of trusting
+    requests' default unbounded, unvalidated redirect chain."""
+    for _ in range(_MAX_REDIRECTS + 1):
+        resolve_and_validate_host(url)
+        resp = requests.get(url, timeout=timeout, allow_redirects=False)
+        location = resp.headers.get("location") if resp.is_redirect else None
+        if location:
+            url = urljoin(url, location)
+            continue
+        return resp
+    raise SSRFError(f"too many redirects fetching {url!r}")
+
 
 # $ref resolution runs on the CI runner, which has network access — an untrusted spec must not be
 # able to make prance fetch a private/metadata host or read local files. We gate EVERY url prance
@@ -57,9 +84,32 @@ def _guard_fetch_url(parsed_url) -> None:
     resolve_and_validate_host(parsed_url.geturl())  # raises SSRFError if host is private/reserved
 
 
+def _safe_ref_fetch_url_text(url, cache={}, encoding=None):  # noqa: B006 (mirrors prance's own signature)
+    """Drop-in replacement for prance.util.url.fetch_url_text's http(s) branch: bounded,
+    per-hop-revalidated redirects (_redirect_safe_get) instead of prance's own bare `requests.get`,
+    which follows redirects with no host check at all (Step 6 security review, F2). _guard_fetch_url
+    has already rejected file/python schemes before this ever runs, so the http(s) case is the only
+    one reachable here; same tuple-and-cache contract as the function this replaces, so
+    ResolvingParser's caller-side behavior is unaffected."""
+    url_key = "text_" + _prance_url.urlresource(url)
+    cached = cache.get(url_key)
+    if cached is not None:
+        return cached
+    resp = _redirect_safe_get(url.geturl(), timeout=15)
+    if not resp.ok:
+        raise _prance_url.ResolutionError(
+            f'Cannot fetch URL "{url.geturl()}": {resp.status_code} {resp.reason}'
+        )
+    entry = (resp.text, resp.headers.get("content-type", "text/plain"))
+    cache[url_key] = entry
+    return entry
+
+
 @contextlib.contextmanager
 def guarded_prance_resolve():
-    """Gate every URL prance fetches during $ref resolution through _guard_fetch_url.
+    """Gate every URL prance fetches during $ref resolution through _guard_fetch_url, and replace
+    the actual http(s) fetch with the redirect-safe one (_safe_ref_fetch_url_text) instead of
+    letting prance's own unbounded, unvalidated-redirect requests.get run.
 
     Wraps prance's single fetch choke point. Asserts that function still exists so a prance
     restructure fails LOUDLY (the default-suite test below breaks) instead of silently reopening
@@ -73,7 +123,10 @@ def guarded_prance_resolve():
 
     def guarded(url, *args, **kwargs):
         _guard_fetch_url(url)
-        return original(url, *args, **kwargs)
+        scheme = (url.scheme or "").lower()
+        if scheme in _ALLOWED_REF_SCHEMES:
+            return _safe_ref_fetch_url_text(url, *args, **kwargs)
+        return original(url, *args, **kwargs)  # unreachable given the guard above; kept for parity
 
     _prance_url.fetch_url_text = guarded
     try:
@@ -256,8 +309,9 @@ def run(spec_url: str, reporter: Reporter | None = None) -> dict:
     rep = reporter or Reporter()
     try:
         rep.send("running", stage="fetching_spec")
-        resolve_and_validate_host(spec_url)  # reject a private/metadata spec_url BEFORE fetching it
-        resp = requests.get(spec_url, timeout=15)
+        # _redirect_safe_get validates the host on every redirect hop, not just the original URL
+        # (F2) — the plain resolve_and_validate_host + requests.get this replaced only checked once.
+        resp = _redirect_safe_get(spec_url, timeout=15)
         resp.raise_for_status()
         with guarded_prance_resolve():  # gate every $ref prance fetches during resolution
             spec = ResolvingParser(spec_string=resp.text).specification
