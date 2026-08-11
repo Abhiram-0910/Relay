@@ -11,6 +11,13 @@
 // per-provider public fact — a bad/limited key just surfaces as a run-time 4xx later (Step 3's
 // problem), not this endpoint's. A 401/403 from the provider passes through cleanly, doubling as
 // up-front key validation before a run is spent.
+//
+// Step 6 security review (F6): this endpoint had no rate limit at all — unauthenticated, and
+// every cache-miss request (including a rejected key, which is deliberately never cached) forces
+// a fresh outbound fetch to the real provider on the project's own Worker account. Reuses the
+// exact same per-IP daily mechanism as POST /api/runs (rateLimit.js), not a bespoke one.
+
+import { checkAndBumpRateLimit } from "./rateLimit.js";
 
 const MODELS_CACHE_TTL_SECONDS = 3600; // 1h — model lists change rarely; the cache is the throttle
 const MODELS_FETCH_TIMEOUT_MS = 10000;
@@ -21,10 +28,10 @@ const CORS = {
   "Access-Control-Allow-Headers": "Content-Type",
 };
 
-const json = (body, status = 200) =>
+const json = (body, status = 200, extraHeaders = {}) =>
   new Response(JSON.stringify(body), {
     status,
-    headers: { "Content-Type": "application/json", ...CORS },
+    headers: { "Content-Type": "application/json", ...CORS, ...extraHeaders },
   });
 
 // OpenRouter model objects carry `supported_parameters`; keep only models that can actually do the
@@ -110,6 +117,19 @@ export async function handleModelsFetch(request, env) {
   if (!cfg) return json({ error: "unknown_provider" }, 400);
   if (typeof apiKey !== "string" || apiKey.length < 1) {
     return json({ error: "missing_api_key" }, 400);
+  }
+
+  // Rate limit AFTER cheap validation, BEFORE the possible outbound fetch — same ordering as
+  // POST /api/runs (validate first, gate before the expensive/costly step). Separate "models"
+  // bucket: this endpoint's limit is independent of the run-creation one.
+  const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+  const rl = await checkAndBumpRateLimit(env, "models", ip);
+  if (!rl.allowed) {
+    return json(
+      { error: "rate_limited", limit: rl.limit, remaining: 0, retryAfter: rl.retryAfter },
+      429,
+      { "Retry-After": String(rl.retryAfter) }
+    );
   }
 
   // Provider-scoped cache — the apiKey is deliberately not part of this key.

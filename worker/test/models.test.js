@@ -20,14 +20,14 @@ class FakeKV {
   }
 }
 
-function makeEnv() {
-  return { RELAY_KV: new FakeKV() };
+function makeEnv(overrides = {}) {
+  return { RELAY_KV: new FakeKV(), ...overrides };
 }
 
-function req(bodyObj) {
+function req(bodyObj, ip) {
   return new Request("https://worker.example/api/models", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(ip ? { "CF-Connecting-IP": ip } : {}) },
     body: JSON.stringify(bodyObj),
   });
 }
@@ -70,6 +70,34 @@ describe("handleModelsFetch — validation", () => {
     expect(res.status).toBe(400);
     expect((await res.json()).error).toBe("missing_api_key");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+// Step 6 security review (F6): this endpoint had no rate limit at all — same mechanism as
+// POST /api/runs (rateLimit.js), not a bespoke one, and a separate bucket from it.
+describe("handleModelsFetch — rate limit", () => {
+  it("blocks past the per-IP daily limit with 429 rate_limited, no provider call once blocked", async () => {
+    const env = makeEnv({ RATE_LIMIT: "2" });
+    fetchMock.mockResolvedValue(fakeResponse(200, GEMINI_BODY));
+
+    const first = await handleModelsFetch(req({ provider: "gemini", apiKey: "sk-a" }, "9.9.9.9"), env);
+    expect(first.status).toBe(200);
+    const second = await handleModelsFetch(req({ provider: "openai", apiKey: "sk-b" }, "9.9.9.9"), env);
+    expect(second.status).toBe(200);
+
+    fetchMock.mockClear();
+    const third = await handleModelsFetch(req({ provider: "openai", apiKey: "sk-c" }, "9.9.9.9"), env);
+    expect(third.status).toBe(429);
+    expect((await third.json()).error).toBe("rate_limited");
+    expect(fetchMock).not.toHaveBeenCalled(); // blocked before ever reaching the provider
+  });
+
+  it("uses its own bucket, independent of POST /api/runs's limit", async () => {
+    const env = makeEnv({ RATE_LIMIT: "1" });
+    fetchMock.mockResolvedValue(fakeResponse(200, GEMINI_BODY));
+    await handleModelsFetch(req({ provider: "gemini", apiKey: "sk-a" }, "9.9.9.8"), env);
+    const stored = await env.RELAY_KV.get(`rl:models:9.9.9.8:${new Date().toISOString().slice(0, 10).replace(/-/g, "")}`);
+    expect(stored).toBe("1"); // the "models" bucket, never "rl:9.9.9.8:..." or "rl:runs:..."
   });
 });
 

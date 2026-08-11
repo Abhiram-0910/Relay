@@ -96,7 +96,7 @@ describe("POST /api/runs", () => {
     expect(res.status).toBe(502);
     // count was refunded to 0, so a subsequent request still succeeds
     const day = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-    expect(await env.RELAY_KV.get(`rl:7.7.7.7:${day}`)).toBe("0");
+    expect(await env.RELAY_KV.get(`rl:runs:7.7.7.7:${day}`)).toBe("0");
   });
 });
 
@@ -140,7 +140,7 @@ describe("POST /api/runs — BYOK wiring", () => {
     expect((await res.json()).error).toBe("invalid_api_key");
     expect(dispatch).not.toHaveBeenCalled();
     const day = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-    expect(await env.RELAY_KV.get(`rl:6.6.6.3:${day}`)).toBe("0");
+    expect(await env.RELAY_KV.get(`rl:runs:6.6.6.3:${day}`)).toBe("0");
   });
 
   it("rejects a malformed model (empty string) the same way, apiKey alone isn't enough to pass", async () => {

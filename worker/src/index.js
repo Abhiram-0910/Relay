@@ -18,6 +18,7 @@
 
 import { storeByokKey, buildDispatchInputs, handleByokKeyFetch, isAuthorizedCallback } from "./byok.js";
 import { handleModelsFetch } from "./models.js";
+import { checkAndBumpRateLimit, refundRateLimit } from "./rateLimit.js";
 
 const DAY_SECONDS = 86400;
 const PROGRESS_THROTTLE_MS = 1000; // KV allows 1 write/sec per key; coalesce faster updates
@@ -43,11 +44,6 @@ const codeKey = (id) => `code:${id}`;
 const CODE_MAX_FILE_BYTES = 256 * 1024; // per file
 const CODE_MAX_TOTAL_BYTES = 2 * 1024 * 1024; // total stored (well under KV's 25 MiB value cap)
 
-function secondsToMidnightUTC(now = new Date()) {
-  const midnight = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1);
-  return Math.max(1, Math.ceil((midnight - now.getTime()) / 1000));
-}
-
 function isValidSpecUrl(value) {
   if (typeof value !== "string") return false;
   try {
@@ -56,23 +52,6 @@ function isValidSpecUrl(value) {
   } catch {
     return false;
   }
-}
-
-/** Per-IP daily counter in KV. Over-limit costs ZERO writes (read-only). Best-effort atomic. */
-async function checkAndBumpRateLimit(env, ip) {
-  const limit = parseInt(env.RATE_LIMIT ?? "3", 10);
-  const day = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-  const key = `rl:${ip}:${day}`;
-  const count = parseInt((await env.RELAY_KV.get(key)) ?? "0", 10);
-  if (count >= limit) {
-    return { allowed: false, limit, remaining: 0, retryAfter: secondsToMidnightUTC() };
-  }
-  await env.RELAY_KV.put(key, String(count + 1), { expirationTtl: secondsToMidnightUTC() });
-  return { allowed: true, limit, remaining: limit - count - 1, key, previous: count };
-}
-
-async function refundRateLimit(env, rl) {
-  if (rl?.key) await env.RELAY_KV.put(rl.key, String(rl.previous), { expirationTtl: secondsToMidnightUTC() });
 }
 
 async function triggerWorkflow(env, inputs) {
@@ -104,7 +83,7 @@ async function handleCreateRun(request, env) {
 
   // Rate limit is the FIRST gate — before the expensive workflow_dispatch.
   const ip = request.headers.get("CF-Connecting-IP") || "unknown";
-  const rl = await checkAndBumpRateLimit(env, ip);
+  const rl = await checkAndBumpRateLimit(env, "runs", ip);
   if (!rl.allowed) {
     return json(
       { error: "rate_limited", limit: rl.limit, remaining: 0, retryAfter: rl.retryAfter },
