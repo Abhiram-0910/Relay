@@ -1,6 +1,9 @@
 import re
 from pathlib import Path
 
+import pytest
+import requests
+
 from app.generate import generate_all_endpoints, generate_endpoint_client
 
 PET_SCHEMA = {
@@ -197,3 +200,26 @@ def test_generate_all_endpoints_generates_and_skips(tmp_path: Path) -> None:
 
     assert all(item["total"] == 4 for item in items)
     assert [item["index"] for item in items] == [1, 2, 3, 4]
+
+
+@pytest.mark.live
+def test_generate_all_endpoints_against_real_petstore_spec(tmp_path: Path) -> None:
+    resp = requests.get("https://petstore3.swagger.io/api/v3/openapi.json", timeout=15)
+    resp.raise_for_status()
+    spec = resp.json()
+
+    items = list(generate_all_endpoints(spec, tmp_path))
+    generated = [item for item in items if item["status"] == "generated"]
+    skipped = [item for item in items if item["status"] == "skipped"]
+
+    assert len(items) == 19
+    assert len(generated) + len(skipped) == 19
+    assert generated
+    assert skipped  # DELETE/logout endpoints have no JSON response, expected
+
+    for item in generated:
+        compile(item["models_code"], "models.py", "exec")
+        compile(item["client_code"], "client.py", "exec")
+
+    assert all(item["total"] == 19 for item in items)
+    assert [item["index"] for item in items] == list(range(1, 20))

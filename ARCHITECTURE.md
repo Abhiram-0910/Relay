@@ -58,10 +58,13 @@ User pastes OpenAPI/Swagger URL
 ```
 
 ## Current implementation status
-`POST /api/parse-spec` fetches a spec URL, parses it with prance, validates it with
-openapi-spec-validator, then deterministically generates a standalone typed Python model +
-client method for every operation that has a JSON response (datamodel-code-generator + Jinja2),
-supporting path params, query params, and JSON request bodies. Operations without a JSON
+The pipeline (`ci_runner.py`'s `run()`, invoked by the deployed Worker+Action — see the hosting
+pivot below; `backend/app/main.py`'s local-dev-only `POST /api/parse-spec` SSE endpoint was never
+deployed anywhere and was deleted in Step 6's security review after a scan found it skipped the
+SSRF guard `ci_runner.py`'s identical fetch already has) fetches a spec URL, parses it with prance,
+validates it with openapi-spec-validator, then deterministically generates a standalone typed
+Python model + client method for every operation that has a JSON response (datamodel-code-generator
++ Jinja2), supporting path params, query params, and JSON request bodies. Operations without a JSON
 response are reported as skipped, not silently dropped. Progress streams per-endpoint over SSE
 (`generating`, current/total). Live-verified against the real Swagger Petstore spec: 14/19
 operations generated, 5/19 correctly skipped, every generated file compile-checked. Each
@@ -284,11 +287,9 @@ it is the entire point of BYOK. Spend is the user's, on the user's key.
 ## Key Files
 | File | Purpose |
 |------|---------|
-| `backend/app/main.py` | FastAPI app; `/api/parse-spec` SSE endpoint |
 | `backend/app/generate.py` | Deterministic model+client generation for every eligible operation |
 | `backend/requirements.txt` | Plain pip deps, no uv/poetry |
-| `backend/tests/test_main.py` | Parse/validate endpoint tests + full-spec live Petstore test (`-m live`) |
-| `backend/tests/test_generate.py` | Generation compile-check tests (path params, query params, request bodies, skip path) |
+| `backend/tests/test_generate.py` | Generation compile-check + injection-safety tests, plus full-spec live Petstore test (`-m live`) |
 | `backend/app/sandbox.py` | Host-side Docker sandbox runner: SSRF pre-flight + `--internal` network + pinned socat sidecar + locked-down `--rm` container + structured report |
 | `backend/sandbox/runner.py` | In-container entrypoint: imports the generated client, makes one call, emits a structured result line |
 | `backend/sandbox/Dockerfile` | Minimal `python:3.12-slim` + requests + pydantic base image (`relay-sandbox`), built once |
