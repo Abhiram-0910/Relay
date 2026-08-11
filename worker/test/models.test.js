@@ -135,12 +135,17 @@ describe("handleModelsFetch — provider errors", () => {
 });
 
 describe("handleModelsFetch — per-provider request shape", () => {
-  it("gemini puts the key in the query string, no auth header", async () => {
+  // Step 6 security review (F9): the key used to ride in the URL query string, which
+  // subrequest-URL logging (wrangler tail, Logpush) routinely captures in full -- moved to the
+  // x-goog-api-key header, matching how every other provider here sends its key.
+  it("gemini sends the key via the x-goog-api-key header, never in the URL", async () => {
     const env = makeEnv();
     fetchMock.mockResolvedValue(fakeResponse(200, GEMINI_BODY));
     await handleModelsFetch(req({ provider: "gemini", apiKey: "sk-gem" }), env);
     const [url, opts] = fetchMock.mock.calls[0];
-    expect(url).toContain("generativelanguage.googleapis.com/v1beta/models?key=sk-gem");
+    expect(url).toBe("https://generativelanguage.googleapis.com/v1beta/models");
+    expect(url).not.toContain("sk-gem");
+    expect(opts.headers["x-goog-api-key"]).toBe("sk-gem");
     expect(opts.headers.Authorization).toBeUndefined();
   });
 

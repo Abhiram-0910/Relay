@@ -46,9 +46,14 @@ const stripModelsPrefix = (name) => String(name ?? "").replace(/^models\//, "");
 // provider-specific response into the uniform { id, label } shape the frontend consumes.
 const PROVIDERS = {
   gemini: {
+    // Step 6 security review (F9): the key used to ride in the URL query string (?key=...)
+    // instead of a header, unlike every other provider here -- subrequest-URL logging (wrangler
+    // tail, Cloudflare Logpush, any tracing integration) routinely captures full URLs, turning a
+    // transient BYOK key into a logged one. x-goog-api-key is Google's own documented header
+    // alternative for this API; same auth, no URL exposure.
     build: (apiKey) => ({
-      url: `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`,
-      headers: {},
+      url: "https://generativelanguage.googleapis.com/v1beta/models",
+      headers: { "x-goog-api-key": apiKey },
     }),
     normalize: (body) =>
       (body.models ?? [])
