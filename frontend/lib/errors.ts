@@ -4,7 +4,8 @@
 // Every code here is a real, stable string a backend layer already sends today:
 //   - Worker synchronous errors (worker/src/index.js, models.js): dispatch_failed, invalid_*, etc.
 //   - Pipeline-level codes (backend/app/ci_runner.py's _classify_pipeline_error): spec_fetch_failed,
-//     spec_invalid, ssrf_blocked_spec, generation_failed, sandbox_unavailable, internal_error.
+//     spec_invalid, ssrf_blocked_spec, generation_failed, sandbox_unavailable, internal_error,
+//     byok_key_missing, byok_fetch_failed (a BYOK run fails closed rather than use the shared key).
 //   - Corrector-level codes (backend/app/correct.py's _classify_corrector_exception):
 //     corrector_auth_failed, corrector_config_error, quota_exhausted_shared/byok,
 //     corrector_network_error, corrector_bad_response, corrector_error.
@@ -36,6 +37,11 @@ const ERROR_MESSAGES: Record<string, string> = {
   generation_failed: "Couldn't generate a client from that spec.",
   sandbox_unavailable: "Something went wrong on our end — try again shortly.",
   internal_error: "Something went wrong on our end — try again shortly.",
+  // BYOK key handoff (run.error). Deliberately NOT in BYOK_SUGGESTING_CODES: the user already
+  // brought a key, so "bring your own key" is no help.
+  byok_key_missing: "Your key expired before the run started. Enter it again and retry.",
+  byok_fetch_failed:
+    "Your key couldn't be passed to the run, so it stopped instead of using a different key. Try again.",
 
   // Corrector-level (per-attempt status_after)
   corrector_auth_failed: "Your key was rejected during auto-fix — check it's still valid.",

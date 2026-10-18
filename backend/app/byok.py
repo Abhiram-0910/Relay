@@ -33,44 +33,68 @@
 #      self_correct already writes (that log currently records model output
 #      and error text — make sure the key itself never ends up in it).
 
+import time
+
 import requests
+
+# Retry exactly once, and only for failures a second try can plausibly fix (network error, 5xx).
+# A 404/401/other 4xx won't change on retry.
+_FETCH_ATTEMPTS = 2
+_RETRY_DELAY_SECONDS = 1.0
+
+
+class ByokKeyMissingError(Exception):
+    """The run was dispatched with a BYOK key, but the Worker has none for it (404): the
+    single-use ticket expired (TTL) or was already consumed. Reported as `byok_key_missing`."""
 
 
 class ByokFetchError(Exception):
-    """Network/auth failure fetching the BYOK key. Callers should catch this
-    and fall back to the shared free-tier key — a user's key not showing up
-    should degrade the run, not crash it."""
+    """Any other failure fetching the BYOK key: auth, unexpected status, malformed body, or a
+    network/5xx error that survived one retry. Reported as `byok_fetch_failed`."""
 
 
 def fetch_byok_key(callback_url: str, run_id: str, callback_secret: str, timeout: float = 5.0):
     """
     Fetch the user's BYOK key exactly once via the Worker's authenticated,
-    delivery-once endpoint.
+    delivery-once endpoint. Returns (api_key, provider, model); `model` is None
+    for records stored without an explicit model.
 
-    Returns (api_key, provider, model) on success, or (None, None, None) if no
-    key was ever stored for this run — a legitimate, common outcome, not an
-    error. `model` is None for records stored without an explicit model (e.g.
-    shared-key/Gemini-default runs).
-
-    Raises ByokFetchError on auth/network failure so the caller can decide to
-    fall back rather than let the whole run crash over a key-fetch hiccup.
+    Fails closed: raises ByokKeyMissingError on 404 and ByokFetchError on
+    everything else. Network errors and 5xx get one retry first. Never returns
+    a missing key; a run that asked for BYOK must not quietly continue on the
+    shared key.
     """
     url = f"{callback_url.rstrip('/')}/api/runs/{run_id}/byok-key"
     headers = {"Authorization": f"Bearer {callback_secret}"}
-    try:
-        resp = requests.get(url, headers=headers, timeout=timeout)
-    except requests.RequestException as e:
-        raise ByokFetchError("byok-key fetch failed: network error") from e
+    for attempt in range(1, _FETCH_ATTEMPTS + 1):
+        last = attempt == _FETCH_ATTEMPTS
+        try:
+            resp = requests.get(url, headers=headers, timeout=timeout)
+        except requests.RequestException as e:
+            if last:
+                raise ByokFetchError("byok-key fetch failed: network error") from e
+            time.sleep(_RETRY_DELAY_SECONDS)
+            continue
+        if resp.status_code >= 500 and not last:
+            time.sleep(_RETRY_DELAY_SECONDS)
+            continue
+        break
 
     if resp.status_code == 404:
-        return None, None, None
+        raise ByokKeyMissingError("byok-key not found: ticket expired or already consumed")
     if resp.status_code == 401:
         raise ByokFetchError("byok-key fetch failed: unauthorized (bad CALLBACK_SECRET)")
     if resp.status_code != 200:
         raise ByokFetchError(f"byok-key fetch failed: unexpected status {resp.status_code}")
 
-    body = resp.json()
-    return body.get("apiKey"), body.get("provider"), body.get("model")
+    try:
+        body = resp.json()
+        api_key = body.get("apiKey")
+    except (ValueError, AttributeError) as e:
+        raise ByokFetchError("byok-key fetch failed: malformed response body") from e
+    if not api_key:
+        raise ByokFetchError("byok-key fetch failed: response carried no key")
+    return api_key, body.get("provider"), body.get("model")
 
 
 def run_with_optional_byok(callback_url, run_id, callback_secret, has_byok, provider_call):
@@ -82,19 +106,16 @@ def run_with_optional_byok(callback_url, run_id, callback_secret, has_byok, prov
     here and in provider_call's own frame, never assigned anywhere
     longer-lived. `provider`/`model` select the adapter and pin the model for
     the correction step (Step 2 multi-provider).
+
+    When has_byok is true, a failed fetch propagates (ByokKeyMissingError /
+    ByokFetchError) and provider_call is never reached: no fallback to the
+    shared key.
     """
     api_key = None
     provider = None
     model = None
     if has_byok:
-        try:
-            api_key, provider, model = fetch_byok_key(callback_url, run_id, callback_secret)
-        except ByokFetchError as e:
-            # Log the fact of the fallback, never request/response detail
-            # that could carry a token.
-            print(f"[ci_runner] BYOK key fetch failed for run {run_id} "
-                  f"({type(e).__name__}); falling back to shared free-tier key")
-            api_key = None
+        api_key, provider, model = fetch_byok_key(callback_url, run_id, callback_secret)
 
     try:
         return provider_call(api_key, provider, model)

@@ -15,6 +15,11 @@ describe("errorMessage — code → plain language, never raw", () => {
     }
   });
 
+  it("maps both BYOK handoff codes to their own messages, not the generic fallback", () => {
+    expect(errorMessage("byok_key_missing")).toMatch(/expired/i);
+    expect(errorMessage("byok_fetch_failed")).toMatch(/couldn't be passed/i);
+  });
+
   it("falls back to a generic message for an unrecognized code, never blank/raw", () => {
     expect(errorMessage("some_future_code_nobody_mapped_yet").length).toBeGreaterThan(0);
     expect(errorMessage("some_future_code_nobody_mapped_yet")).not.toContain("some_future_code");
@@ -37,6 +42,8 @@ describe("suggestsByok — only where switching key source genuinely helps", () 
     expect(suggestsByok("quota_exhausted_byok")).toBe(false);
     expect(suggestsByok("corrector_auth_failed")).toBe(false);
     expect(suggestsByok("spec_invalid")).toBe(false);
+    expect(suggestsByok("byok_key_missing")).toBe(false);
+    expect(suggestsByok("byok_fetch_failed")).toBe(false);
     expect(suggestsByok(null)).toBe(false);
   });
 });

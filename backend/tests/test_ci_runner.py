@@ -14,6 +14,7 @@ from prance.util.formats import ParseError as PranceParseError
 from prance.util.url import ResolutionError as PranceResolutionError
 
 from app import ci_runner
+from app.byok import ByokFetchError, ByokKeyMissingError
 from app.ci_runner import Reporter, _code_files, _required_kwargs, _resolve_base_url
 from app.sandbox import SandboxError, SSRFError
 
@@ -159,6 +160,8 @@ def test_classify_pipeline_error_maps_every_known_type() -> None:
     # is all the classifier checks, so a bare instance via __new__ is enough to prove the mapping.
     assert classify(OpenAPIValidationError.__new__(OpenAPIValidationError)) == "spec_invalid"
     assert classify(ci_runner._GenerationError("x")) == "generation_failed"
+    assert classify(ByokKeyMissingError("x")) == "byok_key_missing"
+    assert classify(ByokFetchError("x")) == "byok_fetch_failed"
     assert classify(RuntimeError("something else entirely")) == "internal_error"
 
 
@@ -293,3 +296,74 @@ def test_ref_fetch_uses_the_same_redirect_safe_get_as_the_primary_spec_fetch(mon
     content, content_type = ci_runner._safe_ref_fetch_url_text(parsed, cache={})
     assert content == "shared: content"
     assert calls == ["https://example.com/shared.yaml"]
+
+
+# --- Phase 3 piece 2: BYOK fails closed, never falls back to the shared key --------------------
+
+_ONE_GET_SPEC = """\
+openapi: "3.0.0"
+info: {title: t, version: "1"}
+servers: [{url: "https://api.example.com"}]
+paths:
+  /things:
+    get:
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: {type: object, properties: {id: {type: integer}}}
+"""
+
+
+def _byok_resp(status):
+    from unittest.mock import MagicMock
+    return MagicMock(status_code=status)
+
+
+@pytest.mark.parametrize("byok_outcomes,code", [
+    ([_byok_resp(404)], "byok_key_missing"),
+    ([_byok_resp(401)], "byok_fetch_failed"),
+    ([_byok_resp(500), _byok_resp(500)], "byok_fetch_failed"),
+    ([requests.ConnectionError("x"), requests.ConnectionError("x")], "byok_fetch_failed"),
+], ids=["404", "401", "500x2", "network"])
+def test_run_byok_fetch_failure_reports_code_and_never_reaches_corrector(monkeypatch, byok_outcomes, code) -> None:
+    """A BYOK run whose key can't be fetched must fail with a classified code, never self-correct
+    on the shared key. The endpoint is live-callable and the sandbox spy would fail it, so any
+    fallback would reach self_correct/genai."""
+    from unittest.mock import MagicMock
+
+    from google import genai
+
+    for k, v in {"RELAY_HAS_BYOK": "true", "RELAY_CALLBACK_URL": "https://worker.example",
+                 "RELAY_RUN_ID": "run-1", "RELAY_CALLBACK_SECRET": "s"}.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setattr(ci_runner, "resolve_and_validate_host", lambda url: "8.8.8.8")
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    outcomes = iter(byok_outcomes)
+
+    def fake_get(url, **kwargs):
+        if url.endswith("/byok-key"):
+            nxt = next(outcomes)
+            if isinstance(nxt, Exception):
+                raise nxt
+            return nxt
+        return MagicMock(text=_ONE_GET_SPEC, is_redirect=False)
+
+    monkeypatch.setattr(ci_runner.requests, "get", fake_get)
+    sandbox = MagicMock(return_value={"status": "call_failed", "detail": "x"})
+    corrector = MagicMock()
+    genai_client = MagicMock()
+    monkeypatch.setattr(ci_runner, "run_in_sandbox", sandbox)
+    monkeypatch.setattr(ci_runner, "self_correct", corrector)
+    monkeypatch.setattr(genai, "Client", genai_client)
+
+    rep = _CapturingReporter()
+    with pytest.raises(Exception):
+        ci_runner.run("https://example.com/openapi.yaml", reporter=rep)
+
+    failed = [s for s in rep.sent if s["status"] == "failed"]
+    assert [f["error"] for f in failed] == [code]
+    sandbox.assert_not_called()
+    corrector.assert_not_called()
+    genai_client.assert_not_called()

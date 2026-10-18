@@ -35,7 +35,8 @@ describe("status → tone SSOT", () => {
 
   it("red/danger covers every pipeline-level code (Step 3/5) with a real short label", () => {
     for (const s of ["spec_fetch_failed", "spec_invalid", "ssrf_blocked_spec",
-                     "generation_failed", "sandbox_unavailable", "internal_error"]) {
+                     "generation_failed", "sandbox_unavailable", "internal_error",
+                     "byok_key_missing", "byok_fetch_failed"]) {
       expect(toneOf(s)).toBe("danger");
       expect(labelOf(s)).not.toBe(s);
     }

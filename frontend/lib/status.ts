@@ -47,6 +47,8 @@ const TONE_BY_STATUS: Record<string, Tone> = {
   generation_failed: "danger",
   sandbox_unavailable: "danger",
   internal_error: "danger",
+  byok_key_missing: "danger",
+  byok_fetch_failed: "danger",
 };
 
 // Literal Tailwind class strings so the content scanner can see them (no dynamic construction).
@@ -110,6 +112,8 @@ const LABELS: Record<string, string> = {
   generation_failed: "Generation failed",
   sandbox_unavailable: "Unavailable",
   internal_error: "Internal error",
+  byok_key_missing: "Key expired",
+  byok_fetch_failed: "Key handoff failed",
 };
 
 export const toneOf = (status: string): Tone => TONE_BY_STATUS[status] ?? "neutral";

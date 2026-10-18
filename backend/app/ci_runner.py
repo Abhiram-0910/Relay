@@ -36,7 +36,7 @@ from prance.util.url import ResolutionError as PranceResolutionError
 
 from urllib.parse import urljoin
 
-from app.byok import run_with_optional_byok
+from app.byok import ByokFetchError, ByokKeyMissingError, run_with_optional_byok
 from app.correct import self_correct
 from app.generate import generate_all_endpoints
 from app.sandbox import STATUS_PASS, SandboxError, SSRFError, resolve_and_validate_host, run_in_sandbox
@@ -293,6 +293,10 @@ def _classify_pipeline_error(exc: Exception) -> str:
     unrecognized stays internal_error, the honest catch-all — never a guessed bucket."""
     if isinstance(exc, _GenerationError):
         return "generation_failed"
+    if isinstance(exc, ByokKeyMissingError):
+        return "byok_key_missing"
+    if isinstance(exc, ByokFetchError):
+        return "byok_fetch_failed"
     if isinstance(exc, SSRFError):
         return "ssrf_blocked_spec"
     if isinstance(exc, SandboxError):
@@ -338,6 +342,8 @@ def run(spec_url: str, reporter: Reporter | None = None) -> dict:
         rep.send("running", stage="live_validating")
         # BYOK: if the Worker stored a user key for this run, fetch it once (delivery-once) and
         # thread it through this validation pass; otherwise self-correction uses the shared key.
+        # Fails closed: a BYOK run whose key can't be fetched raises (byok_key_missing /
+        # byok_fetch_failed) instead of silently running on the shared key.
         has_byok = os.environ.get("RELAY_HAS_BYOK") == "true"
         verdicts = run_with_optional_byok(
             callback_url=os.environ.get("RELAY_CALLBACK_URL"),
