@@ -80,6 +80,9 @@ def fetch_byok_key(callback_url: str, run_id: str, callback_secret: str, timeout
             continue
         break
 
+    if resp.status_code == 404 and attempt > 1:
+        # Ambiguous: the lost first response may have delivered (and deleted) the key.
+        raise ByokFetchError("byok-key fetch failed: 404 on retry after an earlier failure")
     if resp.status_code == 404:
         raise ByokKeyMissingError("byok-key not found: ticket expired or already consumed")
     if resp.status_code == 401:

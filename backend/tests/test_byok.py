@@ -51,7 +51,9 @@ _FAILURES = {
     "403_other_4xx": ([_mock_response(403)], ByokFetchError, 1),
     "500_twice": ([_mock_response(500), _mock_response(503)], ByokFetchError, 2),
     "network_twice": ([requests.ConnectionError("boom"), requests.Timeout("slow")], ByokFetchError, 2),
-    "500_then_404": ([_mock_response(500), _mock_response(404)], ByokKeyMissingError, 2),
+    # 404 on the retry is ambiguous (the lost first response may have consumed the key).
+    "500_then_404": ([_mock_response(500), _mock_response(404)], ByokFetchError, 2),
+    "network_then_404": ([requests.ConnectionError("lost"), _mock_response(404)], ByokFetchError, 2),
     "200_without_key": ([_mock_response(200, {"provider": "openai"})], ByokFetchError, 1),
 }
 

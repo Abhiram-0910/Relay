@@ -326,7 +326,8 @@ def _byok_resp(status):
     ([_byok_resp(401)], "byok_fetch_failed"),
     ([_byok_resp(500), _byok_resp(500)], "byok_fetch_failed"),
     ([requests.ConnectionError("x"), requests.ConnectionError("x")], "byok_fetch_failed"),
-], ids=["404", "401", "500x2", "network"])
+    ([requests.ConnectionError("x"), _byok_resp(404)], "byok_fetch_failed"),
+], ids=["404", "401", "500x2", "network", "network_then_404"])
 def test_run_byok_fetch_failure_reports_code_and_never_reaches_corrector(monkeypatch, byok_outcomes, code) -> None:
     """A BYOK run whose key can't be fetched must fail with a classified code, never self-correct
     on the shared key. The endpoint is live-callable and the sandbox spy would fail it, so any
