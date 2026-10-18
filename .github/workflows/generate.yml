@@ -22,7 +22,7 @@ on:
 
 jobs:
   generate:
-    runs-on: ubuntu-latest          # GitHub-hosted runner ships Docker for the sandbox
+    runs-on: ubuntu-24.04          # GitHub-hosted runner ships Docker for the sandbox
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
