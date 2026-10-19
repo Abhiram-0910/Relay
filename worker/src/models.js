@@ -44,6 +44,15 @@ const STRUCTURED_PARAMS = new Set(["structured_outputs", "response_format", "too
 // model list and does not replace the live fetch. A new family simply won't show until a prefix is
 // added; a wrong pick surfaces as a run-time 4xx (Step 3), never a broken run.
 const OPENAI_CHAT_PREFIXES = ["gpt-", "o1", "o3", "o4", "chatgpt-"];
+// Within those prefixes, substrings that mark a family as definitively non-chat (image, audio I/O,
+// embeddings, moderation, video, legacy completions). Families with no evidence either way stay in.
+const OPENAI_NON_CHAT_SUBSTRINGS = [
+  "image", "transcribe", "tts", "realtime", "whisper", "embedding", "moderation", "sora", "dall-e",
+  "instruct", "davinci", "babbage",
+];
+const isOpenAiChatModel = (id) =>
+  OPENAI_CHAT_PREFIXES.some((p) => id.startsWith(p)) &&
+  !OPENAI_NON_CHAT_SUBSTRINGS.some((s) => id.includes(s));
 const OPENROUTER_MAX_MODELS = 300; // UI-sanity ceiling after the capability filter; not curation
 
 const bearer = (apiKey) => ({ Authorization: `Bearer ${apiKey}` });
@@ -71,8 +80,8 @@ const PROVIDERS = {
     build: (apiKey) => ({ url: "https://api.openai.com/v1/models", headers: bearer(apiKey) }),
     normalize: (body) =>
       (body.data ?? [])
-        .map((m) => m.id)
-        .filter((id) => OPENAI_CHAT_PREFIXES.some((p) => String(id).startsWith(p)))
+        .map((m) => String(m.id))
+        .filter(isOpenAiChatModel)
         .map((id) => ({ id, label: id })),
   },
   grok: {

@@ -1,6 +1,7 @@
 // worker/test/models.test.js
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { handleModelsFetch } from "../src/models.js";
+import OPENAI_MODEL_IDS from "./fixtures/openai-model-ids.json";
 
 // Same minimal fake KV the byok/worker suites use.
 class FakeKV {
@@ -45,6 +46,18 @@ const GEMINI_BODY = {
       supportedGenerationMethods: ["embedContent"] }, // filtered out — can't generateContent
   ],
 };
+
+// A real /v1/models id list (no secrets) and what the OpenAI filter must do with it.
+const DEFINITIVE_NON_CHAT =
+  /image|transcribe|tts|realtime|whisper|embedding|moderation|sora|dall-e|instruct|davinci|babbage/;
+const MUST_KEEP = [
+  "gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-5", "gpt-5-mini", "gpt-5-nano",
+  "o3", "o3-mini", "o4-mini",
+];
+// Unresolved until a funded probe: the probe hit billing_not_active on most ids, and these families
+// had no 404 saying "not supported in v1/chat/completions" for EVERY probed id (codex: one did, five
+// said "deprecated"). They stay allowed and are deliberately not asserted on.
+const UNRESOLVED = ["audio", "search", "pro", "live", "codex", "chat-latest"];
 
 let fetchMock;
 beforeEach(() => {
@@ -186,6 +199,23 @@ describe("handleModelsFetch — per-provider request shape", () => {
     const ids = (await res.json()).models.map((m) => m.id);
     expect(ids).toEqual(["gpt-5", "o3"]); // embeddings + image models filtered out
     expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe("Bearer sk-oai");
+  });
+
+  it("openai filter over the real 133-id /v1/models capture", async () => {
+    const env = makeEnv();
+    fetchMock.mockResolvedValue(fakeResponse(200, { data: OPENAI_MODEL_IDS.map((id) => ({ id })) }));
+    const res = await handleModelsFetch(req({ provider: "openai", apiKey: "sk-oai" }), env);
+    const kept = new Set((await res.json()).models.map((m) => m.id));
+    const excluded = OPENAI_MODEL_IDS.filter((id) => !kept.has(id));
+
+    const nonChat = OPENAI_MODEL_IDS.filter((id) => DEFINITIVE_NON_CHAT.test(id));
+    expect(nonChat.length).toBeGreaterThan(0);
+    for (const id of nonChat) expect(kept.has(id), id).toBe(false);
+    for (const id of MUST_KEEP) expect(kept.has(id), id).toBe(true);
+
+    const unresolved = [...kept].filter((id) => UNRESOLVED.some((f) => id.includes(f)));
+    console.log(`openai filter: kept=${kept.size} excluded=${excluded.length} ` +
+      `(unresolved, kept: ${unresolved.length})`);
   });
 
   it("anthropic uses x-api-key + anthropic-version and maps display_name to label", async () => {
