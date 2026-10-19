@@ -1,6 +1,6 @@
 # Relay
 
-Point Relay at an OpenAPI/Swagger spec URL. It generates a typed Python client (Pydantic v2
+Point Relay at an OpenAPI 3.0/3.1 spec URL. It generates a typed Python client (Pydantic v2
 models + `requests`-based methods), runs that client live against the real target API inside a
 network-isolated Docker sandbox, and — if the live call fails — feeds the failure back to an LLM
 for a self-correcting patch, re-validated in the sandbox on every attempt. The output is a client

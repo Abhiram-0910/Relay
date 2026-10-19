@@ -10,7 +10,7 @@ on:
         description: "Worker-minted run id (KV key)"
         required: true
       spec_url:
-        description: "OpenAPI/Swagger spec URL to process"
+        description: "OpenAPI 3.0/3.1 spec URL to process"
         required: true
       callback_url:
         description: "Worker base URL for progress callbacks"

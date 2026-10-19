@@ -72,10 +72,14 @@ def test_generator_error_reaches_the_report_and_the_ci_log(monkeypatch, capsys) 
         {"index": 1, "total": 1, "status": "skipped", "endpoint": {"method": "GET", "path": evil_path},
          "reason": "generator_error: TypeError"}]))
 
-    result = ci_runner.run("https://example.com/openapi.yaml", reporter=MagicMock())
+    rep = MagicMock()
+    with pytest.raises(ci_runner._NoOperationsGenerated):  # the only operation was skipped (4e)
+        ci_runner.run("https://example.com/openapi.yaml", reporter=rep)
 
-    assert result["skipped"] == [{"endpoint": {"method": "GET", "path": evil_path},
-                                  "reason": "generator_error: TypeError"}]
+    failed = rep.send.call_args_list[-1]
+    assert failed.args == ("failed",) and failed.kwargs["error"] == "no_operations_generated"
+    assert failed.kwargs["result"]["skipped"] == [{"endpoint": {"method": "GET", "path": evil_path},
+                                                   "reason": "generator_error: TypeError"}]
     out = capsys.readouterr().out
     assert f"skipped GET {evil_path!r}: generator_error: TypeError" in out
     assert "\n::set-output" not in out  # the spec's newline never reaches the log raw

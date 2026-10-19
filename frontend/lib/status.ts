@@ -44,6 +44,8 @@ const TONE_BY_STATUS: Record<string, Tone> = {
   // never been mapped — errors.ts had full-sentence messages for them, but no short label/tone.
   spec_fetch_failed: "danger",
   spec_invalid: "danger",
+  unsupported_spec_version: "danger",
+  no_operations_generated: "danger",
   ssrf_blocked_spec: "danger",
   generation_failed: "danger",
   sandbox_unavailable: "danger",
@@ -110,6 +112,8 @@ const LABELS: Record<string, string> = {
   model_unsupported: "Model unsupported",
   spec_fetch_failed: "Fetch failed",
   spec_invalid: "Invalid spec",
+  unsupported_spec_version: "Unsupported version",
+  no_operations_generated: "Nothing generated",
   ssrf_blocked_spec: "Blocked (SSRF)",
   generation_failed: "Generation failed",
   sandbox_unavailable: "Unavailable",

@@ -105,7 +105,7 @@ export default function Home() {
 
       <form onSubmit={submit} className="space-y-3">
         <label htmlFor="specUrl" className="block text-sm font-medium text-slate-300">
-          OpenAPI / Swagger spec URL
+          OpenAPI 3.0/3.1 spec URL
         </label>
         <div className="flex flex-col gap-2 sm:flex-row">
           <input

@@ -4,7 +4,8 @@
 // Every code here is a real, stable string a backend layer already sends today:
 //   - Worker synchronous errors (worker/src/index.js, models.js): dispatch_failed, invalid_*, etc.
 //   - Pipeline-level codes (backend/app/ci_runner.py's _classify_pipeline_error): spec_fetch_failed,
-//     spec_invalid, ssrf_blocked_spec, generation_failed, sandbox_unavailable, internal_error,
+//     spec_invalid, unsupported_spec_version, no_operations_generated, ssrf_blocked_spec,
+//     generation_failed, sandbox_unavailable, internal_error,
 //     byok_key_missing, byok_fetch_failed (a BYOK run fails closed rather than use the shared key).
 //   - Corrector-level codes (backend/app/correct.py's _classify_corrector_exception):
 //     corrector_auth_failed, corrector_config_error, quota_exhausted_shared/byok,
@@ -31,7 +32,11 @@ const ERROR_MESSAGES: Record<string, string> = {
 
   // Pipeline-level (run.error)
   spec_fetch_failed: "Couldn't fetch that spec URL — check it's reachable and try again.",
-  spec_invalid: "That doesn't look like a valid OpenAPI/Swagger document.",
+  spec_invalid: "That doesn't look like a valid OpenAPI 3.0/3.1 document.",
+  unsupported_spec_version:
+    "This spec's version isn't supported. Relay verifies OpenAPI 3.0 and 3.1. For Swagger 2.0, convert it with swagger2openapi or the Swagger Editor and re-submit.",
+  no_operations_generated:
+    "Relay couldn't generate a client for any operation in this spec. Typical causes: no JSON responses, or parameter styles Relay doesn't support yet.",
   ssrf_blocked_spec:
     "That spec (or something it references) points to a private/internal address, which can't be validated from here.",
   generation_failed: "Couldn't generate a client from that spec.",

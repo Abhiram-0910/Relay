@@ -4,7 +4,7 @@ checkpoint snapshots to the Cloudflare Worker's KV via an authenticated callback
 
 Invoked by the GitHub Action (workflow_dispatch) with these env vars:
     RELAY_RUN_ID          run id minted by the Worker (KV key)
-    RELAY_SPEC_URL        OpenAPI/Swagger spec URL to process
+    RELAY_SPEC_URL        OpenAPI 3.0/3.1 spec URL to process
     RELAY_CALLBACK_URL    Worker base URL for progress callbacks
     RELAY_CALLBACK_SECRET shared secret; sent as `Authorization: Bearer` on every callback
     GEMINI_API_KEY        for self-correction (Task 9)
@@ -32,6 +32,7 @@ from openapi_spec_validator.validation.exceptions import OpenAPIValidationError
 from prance import ResolvingParser
 from prance import ValidationError as PranceValidationError
 from prance.util.formats import ParseError as PranceParseError
+from prance.util.formats import parse_spec
 from prance.util.url import ResolutionError as PranceResolutionError
 
 from urllib.parse import urljoin
@@ -41,6 +42,8 @@ from app.correct import self_correct
 from app.generate import generate_all_endpoints
 from app.params import merged_parameters
 from app.sandbox import STATUS_PASS, SandboxError, SSRFError, resolve_and_validate_host, run_in_sandbox
+from app.spec_version import (UNRECOGNISED, SpecVersionInvalid, UnsupportedSpecVersion, check_spec_version,
+                              spec_version_label)
 
 # SECURITY (Step 6, F2): resolve_and_validate_host only checks the URL it's given. `requests.get`
 # follows redirects by default and re-resolves DNS on every hop with NO host check of its own --
@@ -298,6 +301,15 @@ def _live_validate(spec: dict, generated: list[dict], api_key: str | None = None
     return verdicts
 
 
+class _NoOperationsGenerated(Exception):
+    """Generation finished but produced nothing to deliver. Carries the result (with the skipped
+    list) so the failed run still shows why."""
+
+    def __init__(self, result: dict) -> None:
+        super().__init__(f"0 of {result['endpoint_count']} operations generated")
+        self.result = result
+
+
 class _GenerationError(Exception):
     """Marks a failure during generate_all_endpoints for _classify_pipeline_error below.
     Generation has no exception type of its own to key off (unlike SSRFError/SandboxError/etc.), so
@@ -313,6 +325,12 @@ def _classify_pipeline_error(exc: Exception) -> str:
     unrecognized stays internal_error, the honest catch-all — never a guessed bucket."""
     if isinstance(exc, _GenerationError):
         return "generation_failed"
+    if isinstance(exc, _NoOperationsGenerated):
+        return "no_operations_generated"
+    if isinstance(exc, UnsupportedSpecVersion):
+        return "unsupported_spec_version"
+    if isinstance(exc, SpecVersionInvalid):
+        return "spec_invalid"
     if isinstance(exc, ByokKeyMissingError):
         return "byok_key_missing"
     if isinstance(exc, ByokFetchError):
@@ -331,17 +349,25 @@ def _classify_pipeline_error(exc: Exception) -> str:
 def run(spec_url: str, reporter: Reporter | None = None) -> dict:
     """Run the full pipeline for one spec URL, returning the final result dict."""
     rep = reporter or Reporter()
+    spec_version = None
     try:
         rep.send("running", stage="fetching_spec")
         # _redirect_safe_get validates the host on every redirect hop, not just the original URL
         # (F2) — the plain resolve_and_validate_host + requests.get this replaced only checked once.
         resp = _redirect_safe_get(spec_url, timeout=15)
         resp.raise_for_status()
+        # Version gate on the parsed document BEFORE $ref resolution, so an unsupported spec never
+        # triggers a remote $ref fetch. The label is strictly version-shaped (never the URL or raw
+        # spec text), so it is safe for the public Action log and the run record.
+        document = parse_spec(resp.text)
+        spec_version = spec_version_label(document)
+        print(f"spec_version: {spec_version}")
+        check_spec_version(document)
         with guarded_prance_resolve():  # gate every $ref prance fetches during resolution
             spec = ResolvingParser(spec_string=resp.text).specification
         validate_spec(spec)
         title = spec.get("info", {}).get("title")
-        rep.send("running", stage="spec_validated", progress={"title": title})
+        rep.send("running", stage="spec_validated", progress={"title": title, "spec_version": spec_version})
 
         try:
             with tempfile.TemporaryDirectory() as tmp:
@@ -357,6 +383,11 @@ def run(spec_url: str, reporter: Reporter | None = None) -> dict:
         for s in skipped:
             if s["reason"].startswith("generator_error"):
                 print(f"skipped {s['endpoint']['method']} {s['endpoint']['path']!r}: {s['reason']}")
+        if not generated:
+            raise _NoOperationsGenerated({
+                "title": title, "spec_version": spec_version, "endpoint_count": len(items),
+                "generated": [], "parameters": [], "skipped": skipped, "validated": [],
+            })
         rep.send("running", stage="generated",
                  progress={"generated": len(generated), "skipped": len(skipped)})
 
@@ -384,6 +415,7 @@ def run(spec_url: str, reporter: Reporter | None = None) -> dict:
         failed = [v for v in live_called if not v.get("passed")]
         result = {
             "title": title,
+            "spec_version": spec_version,
             "endpoint_count": len(items),
             "generated": [g["endpoint"] for g in generated],
             # The parameter table per generated operation: what the method takes, how each name and
@@ -399,7 +431,11 @@ def run(spec_url: str, reporter: Reporter | None = None) -> dict:
     except Exception as exc:
         code = _classify_pipeline_error(exc)
         detail = f"{type(exc).__name__}: {exc}"[:500]
-        rep.send("failed", stage="error", error=code, error_detail=detail, retries=3)
+        if spec_version is None:  # failed before a document was parsed: still log a version line
+            spec_version = UNRECOGNISED
+            print(f"spec_version: {spec_version}")
+        rep.send("failed", stage="error", error=code, error_detail=detail,
+                 progress={"spec_version": spec_version}, result=getattr(exc, "result", None), retries=3)
         raise
 
 
