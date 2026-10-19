@@ -1,0 +1,367 @@
+{
+  "source": "https://api.apis.guru/v2/list.json",
+  "rules": {
+    "native_openapi3_only": true,
+    "operations": [
+      5,
+      100
+    ],
+    "one_per_provider": true,
+    "order": "sorted id",
+    "target": 30
+  },
+  "specs": [
+    {
+      "id": "open-meteo.com:forecast",
+      "source": "fixed",
+      "url": "https://raw.githubusercontent.com/open-meteo/open-meteo/main/openapi/forecast.yml",
+      "origin_url": null,
+      "sha256": "512e29bca2afb06a088cc27fae5c6793a05e272c6404a67e3632cecb87f8516f",
+      "openapi": "3.1.0",
+      "operations": 1,
+      "license": "Attribution 4.0 International (CC BY 4.0)",
+      "fetched": "2026-10-19"
+    },
+    {
+      "id": "swagger.io:petstore3",
+      "source": "fixed",
+      "url": "https://petstore3.swagger.io/api/v3/openapi.json",
+      "origin_url": null,
+      "sha256": "00441c05add60f28da55eb4563d3fb6bbda364ba8eb7b381e2e2c98613005c82",
+      "openapi": "3.0.4",
+      "operations": 19,
+      "license": "Apache 2.0",
+      "fetched": "2026-10-19"
+    },
+    {
+      "id": "1password.local:connect",
+      "source": "apis.guru",
+      "url": "https://api.apis.guru/v2/specs/1password.local/connect/1.5.7/openapi.json",
+      "origin_url": "https://i.1password.com/media/1password-connect/1password-connect-api.yaml",
+      "sha256": "cf419ac953e31ab216a0450ccd1bf9105201c215d34e9860213aa03338351e43",
+      "openapi": "3.0.2",
+      "operations": 15,
+      "license": null,
+      "fetched": "2026-10-19"
+    },
+    {
+      "id": "6-dot-authentiqio.appspot.com",
+      "source": "apis.guru",
+      "url": "https://api.apis.guru/v2/specs/6-dot-authentiqio.appspot.com/6/openapi.json",
+      "origin_url": "https://raw.githubusercontent.com/AuthentiqID/authentiq-docs/master/docs/swagger/issuer.yaml",
+      "sha256": "c80f55a97519b0b77838e17d309a1dea17c9659a3316c17b9b084c4ed7037a82",
+      "openapi": "3.0.0",
+      "operations": 14,
+      "license": "Apache 2.0",
+      "fetched": "2026-10-19"
+    },
+    {
+      "id": "ably.io:platform",
+      "source": "apis.guru",
+      "url": "https://api.apis.guru/v2/specs/ably.io/platform/1.1.0/openapi.json",
+      "origin_url": "https://raw.githubusercontent.com/ably/open-specs/main/definitions/platform-v1.yaml",
+      "sha256": "e2d7989f73b78ac62ff925692797e6c7a07e0c5423e7bb5a118174848f294d41",
+      "openapi": "3.0.1",
+      "operations": 22,
+      "license": null,
+      "fetched": "2026-10-19"
+    },
+    {
+      "id": "ably.net:control",
+      "source": "apis.guru",
+      "url": "https://api.apis.guru/v2/specs/ably.net/control/1.0.14/openapi.json",
+      "origin_url": "https://raw.githubusercontent.com/ably/open-specs/main/definitions/control-v1.yaml",
+      "sha256": "d36c6c5cc58cb2556019d5a174024b6c6609f5ebc23698e1c7dcdb2c7c289e02",
+      "openapi": "3.0.1",
+      "operations": 22,
+      "license": null,
+      "fetched": "2026-10-19"
+    },
+    {
+      "id": "adobe.com:aem",
+      "source": "apis.guru",
+      "url": "https://api.apis.guru/v2/specs/adobe.com/aem/3.7.1-pre.0/openapi.json",
+      "origin_url": "https://raw.githubusercontent.com/shinesolutions/swagger-aem/master/conf/api.yml",
+      "sha256": "ec812606758838d0b58608eef3dab96a4336f08d0d765cee4a966866d685e895",
+      "openapi": "3.0.0",
+      "operations": 48,
+      "license": null,
+      "fetched": "2026-10-19"
+    },
+    {
+      "id": "adyen.com:AccountService",
+      "source": "apis.guru",
+      "url": "https://api.apis.guru/v2/specs/adyen.com/AccountService/6/openapi.json",
+      "origin_url": "https://raw.githubusercontent.com/Adyen/adyen-openapi/main/json/AccountService-v6.json",
+      "sha256": "908d8242ca116c739c7c2b83875e50d7dcc18052ac8f4c1b31ae5d618878006e",
+      "openapi": "3.1.0",
+      "operations": 20,
+      "license": null,
+      "fetched": "2026-10-19"
+    },
+    {
+      "id": "amentum.space:aviation_radiation",
+      "source": "apis.guru",
+      "url": "https://api.apis.guru/v2/specs/amentum.space/aviation_radiation/1.5.0/openapi.json",
+      "origin_url": "https://cosmicrays.amentum.space//openapi.json",
+      "sha256": "d792217f657a517367a96a7c25106c22a1200db5178d0e988ef46141e69df6af",
+      "openapi": "3.0.0",
+      "operations": 7,
+      "license": null,
+      "fetched": "2026-10-19"
+    },
+    {
+      "id": "apache.org",
+      "source": "apis.guru",
+      "url": "https://api.apis.guru/v2/specs/apache.org/2.5.1/openapi.json",
+      "origin_url": "https://airflow.apache.org/docs/apache-airflow/stable/_specs/v1.yaml",
+      "sha256": "d64b718d898f5f0d3da615e61a9491e31f603dff4dbd64ba6365b472026b1b87",
+      "openapi": "3.0.3",
+      "operations": 73,
+      "license": "Apache 2.0",
+      "fetched": "2026-10-19"
+    },
+    {
+      "id": "api.ebay.com:sell-account",
+      "source": "apis.guru",
+      "url": "https://api.apis.guru/v2/specs/api.ebay.com/sell-account/v1.9.0/openapi.json",
+      "origin_url": "https://developer.ebay.com/api-docs/master/sell/account/openapi/3/sell_account_v1_oas3.json",
+      "sha256": "e6fc413676effa99a2ff4b3acfcbe1d8230556eed188f9b503e6b820fccc1eed",
+      "openapi": "3.0.0",
+      "operations": 36,
+      "license": "eBay API License Agreement",
+      "fetched": "2026-10-19"
+    },
+    {
+      "id": "api.video",
+      "source": "apis.guru",
+      "url": "https://api.apis.guru/v2/specs/api.video/1/openapi.json",
+      "origin_url": "https://docs.api.video/openapi/5f0d4679158b8d006ea6f068",
+      "sha256": "55aea415ca88ec377c3dc8f795618f1462e068866ccc9e6c22e5eac8e37f8963",
+      "openapi": "3.0.0",
+      "operations": 47,
+      "license": null,
+      "fetched": "2026-10-19"
+    },
+    {
+      "id": "api2pdf.com",
+      "source": "apis.guru",
+      "url": "https://api.apis.guru/v2/specs/api2pdf.com/1.0.0/openapi.json",
+      "origin_url": "https://app.swaggerhub.com/apiproxy/schema/file/api2pdf/api2pdf/1.0.0/swagger.json",
+      "sha256": "017ad88f15603c158ad7b89dbe7547aa697bf0266cdeed854be484be1d30da42",
+      "openapi": "3.0.0",
+      "operations": 9,
+      "license": "Creative Commons",
+      "fetched": "2026-10-19"
+    },
+    {
+      "id": "apicurio.local:registry",
+      "source": "apis.guru",
+      "url": "https://api.apis.guru/v2/specs/apicurio.local/registry/2.4.x/openapi.json",
+      "origin_url": "https://raw.githubusercontent.com/Apicurio/apicurio-registry/master/app/src/main/resources-unfiltered/META-INF/resources/api-specifications/registry/v2/openapi.json",
+      "sha256": "66b1813fe1ad392bb874532dfa880795ea768a8300416b5e8445009d6139349a",
+      "openapi": "3.0.2",
+      "operations": 64,
+      "license": "Apache 2.0",
+      "fetched": "2026-10-19"
+    },
+    {
+      "id": "apidapp.com",
+      "source": "apis.guru",
+      "url": "https://api.apis.guru/v2/specs/apidapp.com/2019-02-14T164701Z/openapi.json",
+      "origin_url": "https://apidapp.s3.amazonaws.com/ApiDapp-Start-swagger-7/ApiDapp-Start-swagger+(7).json",
+      "sha256": "03f9b7b50e7e053302ac498bc8db310707ec271f656664ea177387fe47db6b33",
+      "openapi": "3.0.0",
+      "operations": 54,
+      "license": null,
+      "fetched": "2026-10-19"
+    },
+    {
+      "id": "apideck.com:accounting",
+      "source": "apis.guru",
+      "url": "https://api.apis.guru/v2/specs/apideck.com/accounting/9.3.0/openapi.json",
+      "origin_url": "https://raw.githubusercontent.com/apideck-libraries/openapi-specs/master/accounting.yml",
+      "sha256": "c44f6890e394847a68ec7290d345adb0f2b2d2a8ffc787a6ff743add857e9a39",
+      "openapi": "3.0.3",
+      "operations": 53,
+      "license": "Apache 2.0",
+      "fetched": "2026-10-19"
+    },
+    {
+      "id": "apigee.local:registry",
+      "source": "apis.guru",
+      "url": "https://api.apis.guru/v2/specs/apigee.local/registry/0.0.1/openapi.json",
+      "origin_url": "https://raw.githubusercontent.com/apigee/registry/main/openapi.yaml",
+      "sha256": "d1b9f5e864a39d9ff655dfe5a282ff856722ade8c68345ae43e976c696e78fda",
+      "openapi": "3.0.3",
+      "operations": 35,
+      "license": null,
+      "fetched": "2026-10-19"
+    },
+    {
+      "id": "apigee.net:marketcheck-cars",
+      "source": "apis.guru",
+      "url": "https://api.apis.guru/v2/specs/apigee.net/marketcheck-cars/2.01/openapi.json",
+      "origin_url": "https://new-verticals-dot-marketcheck-gcp.uc.r.appspot.com/api-docs",
+      "sha256": "01735c3964b66a27eb9e53bda8b1384e871271ebdf8900ed162d23b476dfb27f",
+      "openapi": "3.0.0",
+      "operations": 71,
+      "license": null,
+      "fetched": "2026-10-19"
+    },
+    {
+      "id": "apis.guru",
+      "source": "apis.guru",
+      "url": "https://api.apis.guru/v2/specs/apis.guru/2.2.0/openapi.json",
+      "origin_url": "https://api.apis.guru/v2/openapi.yaml",
+      "sha256": "23a8f7c4e3084ec7f0a62ac9d08ecf9b5874a0dc0eb45b7064d2e689390fae1d",
+      "openapi": "3.0.0",
+      "operations": 7,
+      "license": "CC0 1.0",
+      "fetched": "2026-10-19"
+    },
+    {
+      "id": "apisetu.gov.in:bajajallianz",
+      "source": "apis.guru",
+      "url": "https://api.apis.guru/v2/specs/apisetu.gov.in/bajajallianz/3.0.0/openapi.json",
+      "origin_url": "https://apisetu.gov.in/api_specification_v8/bajajallianz.yaml",
+      "sha256": "5ec628e922f7cf6b913d81f52c92217bc3441e2f12c21ce42bb69708955a5a78",
+      "openapi": "3.0.0",
+      "operations": 7,
+      "license": null,
+      "fetched": "2026-10-19"
+    },
+    {
+      "id": "apispot.io:whois",
+      "source": "apis.guru",
+      "url": "https://api.apis.guru/v2/specs/apispot.io/whois/1.0/openapi.json",
+      "origin_url": "https://apispot.io/static/whois.yml",
+      "sha256": "a2303a1f5aea8c377b1ac0087640e66bc166991e922b4be4368309eb83f5cc8c",
+      "openapi": "3.0.2",
+      "operations": 8,
+      "license": null,
+      "fetched": "2026-10-19"
+    },
+    {
+      "id": "apiz.ebay.com:sell-finances",
+      "source": "apis.guru",
+      "url": "https://api.apis.guru/v2/specs/apiz.ebay.com/sell-finances/v1.15.0/openapi.json",
+      "origin_url": "https://developer.ebay.com/api-docs/master/sell/finances/openapi/3/sell_finances_v1_oas3.json",
+      "sha256": "d4c21d3231e27ce20bc99d176c96e7ea5541771d6a1cb81bb1148e9c04a4658e",
+      "openapi": "3.0.0",
+      "operations": 7,
+      "license": "eBay API License Agreement",
+      "fetched": "2026-10-19"
+    },
+    {
+      "id": "apple.com:sirikit-cloud-media",
+      "source": "apis.guru",
+      "url": "https://api.apis.guru/v2/specs/apple.com/sirikit-cloud-media/1.0.2/openapi.json",
+      "origin_url": "sirikit-cloud-media.json",
+      "sha256": "7c414aa127097dbea991a59acfab42079bf6ae7ac89d070bc68073338b9f9d19",
+      "openapi": "3.0.1",
+      "operations": 6,
+      "license": null,
+      "fetched": "2026-10-19"
+    },
+    {
+      "id": "apptigent.com",
+      "source": "apis.guru",
+      "url": "https://api.apis.guru/v2/specs/apptigent.com/2021.1.01/openapi.json",
+      "origin_url": "https://portal.apptigent.com/sites/portal.apptigent.com/files/v3-powertools-developer-2021-1-01.json",
+      "sha256": "fb4547decf36d0f3a490995fdaba27ca33c6173a28820cbe27f1972c300c127e",
+      "openapi": "3.0.1",
+      "operations": 88,
+      "license": null,
+      "fetched": "2026-10-19"
+    },
+    {
+      "id": "appwrite.io:client",
+      "source": "apis.guru",
+      "url": "https://api.apis.guru/v2/specs/appwrite.io/client/0.9.3/openapi.json",
+      "origin_url": "https://appwrite.io/specs/open-api3?platform=client",
+      "sha256": "e8aae9c22146a9ca800c6caa4c02ebc538dbc6bb7907cf74a1e8fa5f067a585c",
+      "openapi": "3.0.0",
+      "operations": 61,
+      "license": "BSD-3-Clause",
+      "fetched": "2026-10-19"
+    },
+    {
+      "id": "art19.com",
+      "source": "apis.guru",
+      "url": "https://api.apis.guru/v2/specs/art19.com/1.0.0/openapi.json",
+      "origin_url": "https://art19.com/swagger_json/external/content.json",
+      "sha256": "d55de312ec03e1138b0bbe39249dfa42fbc88f8b2ffab94fb5c671171580fe76",
+      "openapi": "3.0.0",
+      "operations": 22,
+      "license": null,
+      "fetched": "2026-10-19"
+    },
+    {
+      "id": "autodealerdata.com",
+      "source": "apis.guru",
+      "url": "https://api.apis.guru/v2/specs/autodealerdata.com/1.0/openapi.json",
+      "origin_url": "https://api.autodealerdata.com/openapi.json",
+      "sha256": "060fee5261a7973096764d9e669f901b4a4491aca130a13b643549a18a8169ee",
+      "openapi": "3.0.2",
+      "operations": 35,
+      "license": null,
+      "fetched": "2026-10-19"
+    },
+    {
+      "id": "bbc.com",
+      "source": "apis.guru",
+      "url": "https://api.apis.guru/v2/specs/bbc.com/1.0.0/openapi.json",
+      "origin_url": "https://raw.githubusercontent.com/Mermade/bbcparse/master/nitroApi/openapi.yaml",
+      "sha256": "22c4d7d028a589d53984f1d87f224163b4a69594dd471990deac861b9c22243d",
+      "openapi": "3.0.0",
+      "operations": 25,
+      "license": "Nitro Public License",
+      "fetched": "2026-10-19"
+    },
+    {
+      "id": "bbci.co.uk",
+      "source": "apis.guru",
+      "url": "https://api.apis.guru/v2/specs/bbci.co.uk/1.0/openapi.json",
+      "origin_url": "https://raw.githubusercontent.com/Mermade/bbcparse/master/iblApi/openapi.yaml",
+      "sha256": "0da4e53dce293a52c24dcea2234834f8513df08d05772851323a885a43981f8f",
+      "openapi": "3.0.0",
+      "operations": 30,
+      "license": "MIT",
+      "fetched": "2026-10-19"
+    },
+    {
+      "id": "bclaws.ca:bclaws",
+      "source": "apis.guru",
+      "url": "https://api.apis.guru/v2/specs/bclaws.ca/bclaws/1.0.0/openapi.json",
+      "origin_url": "https://raw.githubusercontent.com/bcgov/api-specs/master/bclaws/bclaws.json",
+      "sha256": "c8e9c08e5ad29c3d7348d1387cdfed022ff04a158c3c019d17d03a5575545fb1",
+      "openapi": "3.0.0",
+      "operations": 7,
+      "license": "Queen's Printer License",
+      "fetched": "2026-10-19"
+    },
+    {
+      "id": "bhagavadgita.io",
+      "source": "apis.guru",
+      "url": "https://api.apis.guru/v2/specs/bhagavadgita.io/1.0/openapi.json",
+      "origin_url": "http://bhagavadgita.io/apispec_1.json",
+      "sha256": "c93fa46829aa1eb54bf5bfdf867c22a852e32b072a147c7c3aa06130d8b965f1",
+      "openapi": "3.0.0",
+      "operations": 6,
+      "license": null,
+      "fetched": "2026-10-19"
+    },
+    {
+      "id": "bigoven.com",
+      "source": "apis.guru",
+      "url": "https://api.apis.guru/v2/specs/bigoven.com/partner/openapi.json",
+      "origin_url": "http://api2.bigoven.com/swagger/docs/partner",
+      "sha256": "754cdf4079a4dde7404bd4e1e7a89d84028b9239b1fcc60f72913747915902e2",
+      "openapi": "3.0.0",
+      "operations": 66,
+      "license": null,
+      "fetched": "2026-10-19"
+    }
+  ]
+}

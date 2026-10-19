@@ -24,6 +24,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from typing import Callable
 
 import prance.util.url as _prance_url
 import requests
@@ -343,27 +344,48 @@ def _classify_pipeline_error(exc: Exception) -> str:
     return "internal_error"
 
 
+def load_spec_text(text: str, final_url: str,
+                   on_version: Callable[[str], None] = lambda label: None) -> tuple[dict, str, str]:
+    """Parse -> version gate -> $ref resolution -> validation, for spec text fetched from
+    `final_url`. Returns (spec, final_url, spec_version label). `on_version` gets the public label
+    as soon as it is known, before the gate can raise.
+
+    The gate runs on the parsed document BEFORE $ref resolution, so an unsupported spec never
+    triggers a remote $ref fetch. The label is strictly version-shaped (never the URL or raw spec
+    text), so it is safe for the public Action log and the run record."""
+    document = parse_spec(text)
+    label = spec_version_label(document)
+    on_version(label)
+    check_spec_version(document)
+    with guarded_prance_resolve():  # gate every $ref prance fetches during resolution
+        spec = ResolvingParser(spec_string=text).specification
+    validate_spec(spec)
+    return spec, final_url, label
+
+
+def load_spec(spec_url: str,
+              on_version: Callable[[str], None] = lambda label: None) -> tuple[dict, str, str]:
+    """Fetch, then load_spec_text. The returned URL is the FINAL one after redirects, which is what
+    relative `servers` URLs resolve against. _redirect_safe_get validates the host on every
+    redirect hop, not just the original URL (F2)."""
+    resp = _redirect_safe_get(spec_url, timeout=15)
+    resp.raise_for_status()
+    return load_spec_text(resp.text, resp.url, on_version)
+
+
 def run(spec_url: str, reporter: Reporter | None = None) -> dict:
     """Run the full pipeline for one spec URL, returning the final result dict."""
     rep = reporter or Reporter()
     spec_version = None
+
+    def version_seen(label: str) -> None:
+        nonlocal spec_version
+        spec_version = label
+        print(f"spec_version: {label}")
+
     try:
         rep.send("running", stage="fetching_spec")
-        # _redirect_safe_get validates the host on every redirect hop, not just the original URL
-        # (F2) — the plain resolve_and_validate_host + requests.get this replaced only checked once.
-        resp = _redirect_safe_get(spec_url, timeout=15)
-        resp.raise_for_status()
-        final_spec_url = resp.url  # after redirects: relative `servers` URLs resolve against this
-        # Version gate on the parsed document BEFORE $ref resolution, so an unsupported spec never
-        # triggers a remote $ref fetch. The label is strictly version-shaped (never the URL or raw
-        # spec text), so it is safe for the public Action log and the run record.
-        document = parse_spec(resp.text)
-        spec_version = spec_version_label(document)
-        print(f"spec_version: {spec_version}")
-        check_spec_version(document)
-        with guarded_prance_resolve():  # gate every $ref prance fetches during resolution
-            spec = ResolvingParser(spec_string=resp.text).specification
-        validate_spec(spec)
+        spec, final_spec_url, _ = load_spec(spec_url, on_version=version_seen)
         title = spec.get("info", {}).get("title")
         rep.send("running", stage="spec_validated", progress={"title": title, "spec_version": spec_version})
 

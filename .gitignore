@@ -4,3 +4,6 @@ venv/
 node_modules/
 *:Zone.Identifier
 worker/.wrangler/
+
+# Corpus spec cache (piece 4f): fetched third-party specs, never committed or redistributed
+backend/corpus/.cache/

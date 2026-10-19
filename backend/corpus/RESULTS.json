@@ -1,0 +1,1159 @@
+{
+  "meta": {
+    "git": {
+      "sha": "c6f709926470627dd6a48a79a5fc0b77f439f1e4",
+      "uncommitted": [
+        "backend/app/ci_runner.py",
+        "scripts/corpus_check.py",
+        "scripts/corpus_select.py",
+        "scripts/run_corpus.py"
+      ]
+    },
+    "date": "2026-10-19 20:15Z",
+    "versions": {
+      "venv": {
+        "python": "3.14.4",
+        "datamodel-code-generator": "0.71.0",
+        "pydantic": "2.13.4",
+        "prance": "26.7.19.0",
+        "jinja2": "3.1.6",
+        "requests": "2.34.2"
+      },
+      "sandbox_image": {
+        "python": "3.12.15",
+        "pydantic": "2.14.1",
+        "requests": "2.34.2"
+      }
+    }
+  },
+  "gates": [
+    [
+      "G1 zero compile failures",
+      0
+    ],
+    [
+      "G2 zero inert-check failures",
+      7
+    ],
+    [
+      "G3 zero generator_error skips",
+      0
+    ],
+    [
+      "G4 zero execution-check failures",
+      61
+    ],
+    [
+      "G5 zero hash_mismatch and zero timeouts",
+      0
+    ]
+  ],
+  "specs": [
+    {
+      "id": "open-meteo.com:forecast",
+      "openapi": "3.1.0",
+      "status": "ok",
+      "spec_version": "openapi 3.1.0",
+      "ops_total": 1,
+      "generated": 1,
+      "skipped": {},
+      "lossy": {
+        "enum_not_literal": 1
+      },
+      "ignored": {},
+      "compile_failures": [],
+      "inert_failures": [],
+      "exec_ok": 1,
+      "exec_skipped_required_body": 0,
+      "exec_failures": [],
+      "features": {
+        "header_params": false,
+        "array_query_params": true,
+        "path_item_parameters": false,
+        "operation_or_path_servers": true,
+        "non_json_responses": false
+      },
+      "seconds": 2.0
+    },
+    {
+      "id": "swagger.io:petstore3",
+      "openapi": "3.0.4",
+      "status": "ok",
+      "spec_version": "openapi 3.0.4",
+      "ops_total": 19,
+      "generated": 14,
+      "skipped": {
+        "no_json_response": 5
+      },
+      "lossy": {},
+      "ignored": {},
+      "compile_failures": [],
+      "inert_failures": [],
+      "exec_ok": 9,
+      "exec_skipped_required_body": 2,
+      "exec_failures": [
+        {
+          "op": "POST /store/order",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "POST /user",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "POST /user/createWithList",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        }
+      ],
+      "features": {
+        "header_params": true,
+        "array_query_params": true,
+        "path_item_parameters": false,
+        "operation_or_path_servers": false,
+        "non_json_responses": true
+      },
+      "seconds": 3.1
+    },
+    {
+      "id": "1password.local:connect",
+      "openapi": "3.0.2",
+      "status": "ok",
+      "spec_version": "openapi 3.0.2",
+      "ops_total": 15,
+      "generated": 11,
+      "skipped": {
+        "no_json_response": 4
+      },
+      "lossy": {},
+      "ignored": {},
+      "compile_failures": [],
+      "inert_failures": [],
+      "exec_ok": 8,
+      "exec_skipped_required_body": 0,
+      "exec_failures": [
+        {
+          "op": "POST /vaults/{vaultUuid}/items",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "PATCH /vaults/{vaultUuid}/items/{itemUuid}",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "PUT /vaults/{vaultUuid}/items/{itemUuid}",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        }
+      ],
+      "features": {
+        "header_params": false,
+        "array_query_params": false,
+        "path_item_parameters": true,
+        "operation_or_path_servers": true,
+        "non_json_responses": true
+      },
+      "seconds": 2.8
+    },
+    {
+      "id": "6-dot-authentiqio.appspot.com",
+      "openapi": "3.0.0",
+      "status": "ok",
+      "spec_version": "openapi 3.0.0",
+      "ops_total": 14,
+      "generated": 11,
+      "skipped": {
+        "no_json_response": 3
+      },
+      "lossy": {},
+      "ignored": {},
+      "compile_failures": [],
+      "inert_failures": [],
+      "exec_ok": 11,
+      "exec_skipped_required_body": 0,
+      "exec_failures": [],
+      "features": {
+        "header_params": false,
+        "array_query_params": false,
+        "path_item_parameters": false,
+        "operation_or_path_servers": false,
+        "non_json_responses": true
+      },
+      "seconds": 2.4
+    },
+    {
+      "id": "ably.io:platform",
+      "openapi": "3.0.1",
+      "status": "load_failed:spec_invalid",
+      "spec_version": null,
+      "ops_total": 22,
+      "generated": 0,
+      "skipped": {},
+      "lossy": {},
+      "ignored": {},
+      "compile_failures": [],
+      "inert_failures": [],
+      "exec_ok": 0,
+      "exec_skipped_required_body": 0,
+      "exec_failures": [],
+      "features": {},
+      "load_error": "ValidationError",
+      "seconds": 0.2
+    },
+    {
+      "id": "ably.net:control",
+      "openapi": "3.0.1",
+      "status": "ok",
+      "spec_version": "openapi 3.0.1",
+      "ops_total": 22,
+      "generated": 17,
+      "skipped": {
+        "no_json_response": 5
+      },
+      "lossy": {},
+      "ignored": {},
+      "compile_failures": [],
+      "inert_failures": [],
+      "exec_ok": 8,
+      "exec_skipped_required_body": 0,
+      "exec_failures": [
+        {
+          "op": "POST /accounts/{account_id}/apps",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "POST /apps/{app_id}/keys",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "PATCH /apps/{app_id}/keys/{key_id}",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "POST /apps/{app_id}/namespaces",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "PATCH /apps/{app_id}/namespaces/{namespace_id}",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "POST /apps/{app_id}/queues",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "POST /apps/{app_id}/rules",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "PATCH /apps/{app_id}/rules/{rule_id}",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "PATCH /apps/{id}",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        }
+      ],
+      "features": {
+        "header_params": false,
+        "array_query_params": false,
+        "path_item_parameters": false,
+        "operation_or_path_servers": false,
+        "non_json_responses": false
+      },
+      "seconds": 6.2
+    },
+    {
+      "id": "adobe.com:aem",
+      "openapi": "3.0.0",
+      "status": "ok",
+      "spec_version": "openapi 3.0.0",
+      "ops_total": 48,
+      "generated": 3,
+      "skipped": {
+        "no_json_response": 45
+      },
+      "lossy": {},
+      "ignored": {},
+      "compile_failures": [],
+      "inert_failures": [],
+      "exec_ok": 3,
+      "exec_skipped_required_body": 0,
+      "exec_failures": [],
+      "features": {
+        "header_params": false,
+        "array_query_params": true,
+        "path_item_parameters": false,
+        "operation_or_path_servers": false,
+        "non_json_responses": true
+      },
+      "seconds": 1.5
+    },
+    {
+      "id": "adyen.com:AccountService",
+      "openapi": "3.1.0",
+      "status": "ok",
+      "spec_version": "openapi 3.1.0",
+      "ops_total": 20,
+      "generated": 20,
+      "skipped": {},
+      "lossy": {},
+      "ignored": {},
+      "compile_failures": [],
+      "inert_failures": [],
+      "exec_ok": 0,
+      "exec_skipped_required_body": 0,
+      "exec_failures": [
+        {
+          "op": "POST /checkAccountHolder",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "POST /closeAccount",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "POST /closeAccountHolder",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "POST /closeStores",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "POST /createAccount",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "POST /createAccountHolder",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "POST /deleteBankAccounts",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "POST /deleteLegalArrangements",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "POST /deletePayoutMethods",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "POST /deleteShareholders",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "POST /deleteSignatories",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "POST /getAccountHolder",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "POST /getTaxForm",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "POST /getUploadedDocuments",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "POST /suspendAccountHolder",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "POST /unSuspendAccountHolder",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "POST /updateAccount",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "POST /updateAccountHolder",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "POST /updateAccountHolderState",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "POST /uploadDocument",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        }
+      ],
+      "features": {
+        "header_params": false,
+        "array_query_params": false,
+        "path_item_parameters": false,
+        "operation_or_path_servers": false,
+        "non_json_responses": false
+      },
+      "seconds": 10.5
+    },
+    {
+      "id": "amentum.space:aviation_radiation",
+      "openapi": "3.0.0",
+      "status": "ok",
+      "spec_version": "openapi 3.0.0",
+      "ops_total": 7,
+      "generated": 7,
+      "skipped": {},
+      "lossy": {},
+      "ignored": {},
+      "compile_failures": [],
+      "inert_failures": [],
+      "exec_ok": 7,
+      "exec_skipped_required_body": 0,
+      "exec_failures": [],
+      "features": {
+        "header_params": false,
+        "array_query_params": true,
+        "path_item_parameters": false,
+        "operation_or_path_servers": false,
+        "non_json_responses": false
+      },
+      "seconds": 2.0
+    },
+    {
+      "id": "apache.org",
+      "openapi": "3.0.3",
+      "status": "ok",
+      "spec_version": "openapi 3.0.3",
+      "ops_total": 73,
+      "generated": 66,
+      "skipped": {
+        "no_json_response": 7
+      },
+      "lossy": {},
+      "ignored": {},
+      "compile_failures": [],
+      "inert_failures": [],
+      "exec_ok": 41,
+      "exec_skipped_required_body": 24,
+      "exec_failures": [
+        {
+          "op": "PATCH /dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}/{map_index}",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        }
+      ],
+      "features": {
+        "header_params": false,
+        "array_query_params": true,
+        "path_item_parameters": true,
+        "operation_or_path_servers": false,
+        "non_json_responses": true
+      },
+      "seconds": 12.8
+    },
+    {
+      "id": "api.ebay.com:sell-account",
+      "openapi": "3.0.0",
+      "status": "ok",
+      "spec_version": "openapi 3.0.0",
+      "ops_total": 36,
+      "generated": 30,
+      "skipped": {
+        "no_json_response": 6
+      },
+      "lossy": {},
+      "ignored": {},
+      "compile_failures": [],
+      "inert_failures": [],
+      "exec_ok": 21,
+      "exec_skipped_required_body": 9,
+      "exec_failures": [],
+      "features": {
+        "header_params": true,
+        "array_query_params": false,
+        "path_item_parameters": false,
+        "operation_or_path_servers": false,
+        "non_json_responses": false
+      },
+      "seconds": 6.8
+    },
+    {
+      "id": "api.video",
+      "openapi": "3.0.0",
+      "status": "load_failed:spec_invalid",
+      "spec_version": null,
+      "ops_total": 47,
+      "generated": 0,
+      "skipped": {},
+      "lossy": {},
+      "ignored": {},
+      "compile_failures": [],
+      "inert_failures": [],
+      "exec_ok": 0,
+      "exec_skipped_required_body": 0,
+      "exec_failures": [],
+      "features": {},
+      "load_error": "ResolutionError",
+      "seconds": 0.2
+    },
+    {
+      "id": "api2pdf.com",
+      "openapi": "3.0.0",
+      "status": "ok",
+      "spec_version": "openapi 3.0.0",
+      "ops_total": 9,
+      "generated": 8,
+      "skipped": {
+        "no_json_response": 1
+      },
+      "lossy": {},
+      "ignored": {},
+      "compile_failures": [],
+      "inert_failures": [],
+      "exec_ok": 2,
+      "exec_skipped_required_body": 0,
+      "exec_failures": [
+        {
+          "op": "POST /chrome/html",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "POST /chrome/url",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "POST /libreoffice/convert",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "POST /merge",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "POST /wkhtmltopdf/html",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "POST /wkhtmltopdf/url",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        }
+      ],
+      "features": {
+        "header_params": false,
+        "array_query_params": false,
+        "path_item_parameters": false,
+        "operation_or_path_servers": false,
+        "non_json_responses": true
+      },
+      "seconds": 1.9
+    },
+    {
+      "id": "apicurio.local:registry",
+      "openapi": "3.0.2",
+      "status": "load_failed:internal_error",
+      "spec_version": null,
+      "ops_total": 64,
+      "generated": 0,
+      "skipped": {},
+      "lossy": {},
+      "ignored": {},
+      "compile_failures": [],
+      "inert_failures": [],
+      "exec_ok": 0,
+      "exec_skipped_required_body": 0,
+      "exec_failures": [],
+      "features": {},
+      "load_error": "KeyError",
+      "seconds": 0.3
+    },
+    {
+      "id": "apidapp.com",
+      "openapi": "3.0.0",
+      "status": "ok",
+      "spec_version": "openapi 3.0.0",
+      "ops_total": 54,
+      "generated": 54,
+      "skipped": {},
+      "lossy": {},
+      "ignored": {},
+      "compile_failures": [],
+      "inert_failures": [],
+      "exec_ok": 54,
+      "exec_skipped_required_body": 0,
+      "exec_failures": [],
+      "features": {
+        "header_params": false,
+        "array_query_params": false,
+        "path_item_parameters": false,
+        "operation_or_path_servers": false,
+        "non_json_responses": false
+      },
+      "seconds": 8.7
+    },
+    {
+      "id": "apideck.com:accounting",
+      "openapi": "3.0.3",
+      "status": "load_failed:spec_invalid",
+      "spec_version": null,
+      "ops_total": 53,
+      "generated": 0,
+      "skipped": {},
+      "lossy": {},
+      "ignored": {},
+      "compile_failures": [],
+      "inert_failures": [],
+      "exec_ok": 0,
+      "exec_skipped_required_body": 0,
+      "exec_failures": [],
+      "features": {},
+      "load_error": "ResolutionError",
+      "seconds": 0.5
+    },
+    {
+      "id": "apigee.local:registry",
+      "openapi": "3.0.3",
+      "status": "ok",
+      "spec_version": "openapi 3.0.3",
+      "ops_total": 35,
+      "generated": 28,
+      "skipped": {
+        "no_json_response": 7
+      },
+      "lossy": {},
+      "ignored": {},
+      "compile_failures": [],
+      "inert_failures": [],
+      "exec_ok": 14,
+      "exec_skipped_required_body": 14,
+      "exec_failures": [],
+      "features": {
+        "header_params": false,
+        "array_query_params": false,
+        "path_item_parameters": false,
+        "operation_or_path_servers": false,
+        "non_json_responses": true
+      },
+      "seconds": 5.5
+    },
+    {
+      "id": "apigee.net:marketcheck-cars",
+      "openapi": "3.0.0",
+      "status": "ok",
+      "spec_version": "openapi 3.0.0",
+      "ops_total": 71,
+      "generated": 69,
+      "skipped": {
+        "no_json_response": 2
+      },
+      "lossy": {},
+      "ignored": {},
+      "compile_failures": [],
+      "inert_failures": [],
+      "exec_ok": 67,
+      "exec_skipped_required_body": 2,
+      "exec_failures": [],
+      "features": {
+        "header_params": false,
+        "array_query_params": false,
+        "path_item_parameters": false,
+        "operation_or_path_servers": false,
+        "non_json_responses": true
+      },
+      "seconds": 19.1
+    },
+    {
+      "id": "apis.guru",
+      "openapi": "3.0.0",
+      "status": "ok",
+      "spec_version": "openapi 3.0.0",
+      "ops_total": 7,
+      "generated": 7,
+      "skipped": {},
+      "lossy": {},
+      "ignored": {},
+      "compile_failures": [],
+      "inert_failures": [
+        {
+          "op": "GET /providers.json",
+          "file": "models_code",
+          "detail": "'call in Datum definition header (line 9)'"
+        },
+        {
+          "op": "GET /{provider}/services.json",
+          "file": "models_code",
+          "detail": "'call in Datum definition header (line 9)'"
+        }
+      ],
+      "exec_ok": 5,
+      "exec_skipped_required_body": 0,
+      "exec_failures": [],
+      "features": {
+        "header_params": false,
+        "array_query_params": false,
+        "path_item_parameters": false,
+        "operation_or_path_servers": false,
+        "non_json_responses": false
+      },
+      "seconds": 1.5
+    },
+    {
+      "id": "apisetu.gov.in:bajajallianz",
+      "openapi": "3.0.0",
+      "status": "ok",
+      "spec_version": "openapi 3.0.0",
+      "ops_total": 7,
+      "generated": 0,
+      "skipped": {
+        "no_json_response": 7
+      },
+      "lossy": {},
+      "ignored": {},
+      "compile_failures": [],
+      "inert_failures": [],
+      "exec_ok": 0,
+      "exec_skipped_required_body": 0,
+      "exec_failures": [],
+      "features": {
+        "header_params": false,
+        "array_query_params": false,
+        "path_item_parameters": false,
+        "operation_or_path_servers": false,
+        "non_json_responses": true
+      },
+      "seconds": 0.2
+    },
+    {
+      "id": "apispot.io:whois",
+      "openapi": "3.0.2",
+      "status": "ok",
+      "spec_version": "openapi 3.0.2",
+      "ops_total": 8,
+      "generated": 6,
+      "skipped": {
+        "no_json_response": 2
+      },
+      "lossy": {},
+      "ignored": {},
+      "compile_failures": [],
+      "inert_failures": [],
+      "exec_ok": 5,
+      "exec_skipped_required_body": 1,
+      "exec_failures": [],
+      "features": {
+        "header_params": false,
+        "array_query_params": false,
+        "path_item_parameters": false,
+        "operation_or_path_servers": false,
+        "non_json_responses": false
+      },
+      "seconds": 1.5
+    },
+    {
+      "id": "apiz.ebay.com:sell-finances",
+      "openapi": "3.0.0",
+      "status": "ok",
+      "spec_version": "openapi 3.0.0",
+      "ops_total": 7,
+      "generated": 7,
+      "skipped": {},
+      "lossy": {},
+      "ignored": {},
+      "compile_failures": [],
+      "inert_failures": [],
+      "exec_ok": 7,
+      "exec_skipped_required_body": 0,
+      "exec_failures": [],
+      "features": {
+        "header_params": true,
+        "array_query_params": false,
+        "path_item_parameters": false,
+        "operation_or_path_servers": false,
+        "non_json_responses": false
+      },
+      "seconds": 2.2
+    },
+    {
+      "id": "apple.com:sirikit-cloud-media",
+      "openapi": "3.0.1",
+      "status": "ok",
+      "spec_version": "openapi 3.0.1",
+      "ops_total": 6,
+      "generated": 5,
+      "skipped": {
+        "no_json_response": 1
+      },
+      "lossy": {},
+      "ignored": {},
+      "compile_failures": [],
+      "inert_failures": [
+        {
+          "op": "POST /intent/addMedia",
+          "file": "models_code",
+          "detail": "'call in TraceItem definition header (line 280)'"
+        },
+        {
+          "op": "POST /intent/playMedia",
+          "file": "models_code",
+          "detail": "'call in TraceItem definition header (line 363)'"
+        },
+        {
+          "op": "POST /intent/updateMediaAffinity",
+          "file": "models_code",
+          "detail": "'call in TraceItem definition header (line 233)'"
+        },
+        {
+          "op": "POST /queues/playMedia",
+          "file": "models_code",
+          "detail": "'dunder name: __annotations__ (line 93)'"
+        },
+        {
+          "op": "POST /queues/updateActivity",
+          "file": "models_code",
+          "detail": "'dunder name: __annotations__ (line 93)'"
+        }
+      ],
+      "exec_ok": 0,
+      "exec_skipped_required_body": 0,
+      "exec_failures": [],
+      "features": {
+        "header_params": true,
+        "array_query_params": false,
+        "path_item_parameters": false,
+        "operation_or_path_servers": false,
+        "non_json_responses": true
+      },
+      "seconds": 1.3
+    },
+    {
+      "id": "apptigent.com",
+      "openapi": "3.0.1",
+      "status": "load_failed:spec_invalid",
+      "spec_version": null,
+      "ops_total": 88,
+      "generated": 0,
+      "skipped": {},
+      "lossy": {},
+      "ignored": {},
+      "compile_failures": [],
+      "inert_failures": [],
+      "exec_ok": 0,
+      "exec_skipped_required_body": 0,
+      "exec_failures": [],
+      "features": {},
+      "load_error": "ValidationError",
+      "seconds": 0.3
+    },
+    {
+      "id": "appwrite.io:client",
+      "openapi": "3.0.0",
+      "status": "ok",
+      "spec_version": "openapi 3.0.0",
+      "ops_total": 61,
+      "generated": 43,
+      "skipped": {
+        "no_json_response": 18
+      },
+      "lossy": {},
+      "ignored": {},
+      "compile_failures": [],
+      "inert_failures": [],
+      "exec_ok": 24,
+      "exec_skipped_required_body": 0,
+      "exec_failures": [
+        {
+          "op": "POST /account",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "PATCH /account/email",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "PATCH /account/name",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "PATCH /account/password",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "PATCH /account/prefs",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "POST /account/recovery",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "PUT /account/recovery",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "POST /account/sessions",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "POST /account/verification",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "PUT /account/verification",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "POST /database/collections/{collectionId}/documents",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "PATCH /database/collections/{collectionId}/documents/{documentId}",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "POST /functions/{functionId}/executions",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "PUT /storage/files/{fileId}",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "POST /teams",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "PUT /teams/{teamId}",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "POST /teams/{teamId}/memberships",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "PATCH /teams/{teamId}/memberships/{membershipId}",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        },
+        {
+          "op": "PATCH /teams/{teamId}/memberships/{membershipId}/status",
+          "error": "AttributeError",
+          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
+        }
+      ],
+      "features": {
+        "header_params": false,
+        "array_query_params": true,
+        "path_item_parameters": false,
+        "operation_or_path_servers": false,
+        "non_json_responses": false
+      },
+      "seconds": 7.8
+    },
+    {
+      "id": "art19.com",
+      "openapi": "3.0.0",
+      "status": "load_failed:spec_invalid",
+      "spec_version": null,
+      "ops_total": 22,
+      "generated": 0,
+      "skipped": {},
+      "lossy": {},
+      "ignored": {},
+      "compile_failures": [],
+      "inert_failures": [],
+      "exec_ok": 0,
+      "exec_skipped_required_body": 0,
+      "exec_failures": [],
+      "features": {},
+      "load_error": "ValidationError",
+      "seconds": 0.3
+    },
+    {
+      "id": "autodealerdata.com",
+      "openapi": "3.0.2",
+      "status": "ok",
+      "spec_version": "openapi 3.0.2",
+      "ops_total": 35,
+      "generated": 35,
+      "skipped": {},
+      "lossy": {},
+      "ignored": {},
+      "compile_failures": [],
+      "inert_failures": [],
+      "exec_ok": 34,
+      "exec_skipped_required_body": 1,
+      "exec_failures": [],
+      "features": {
+        "header_params": false,
+        "array_query_params": false,
+        "path_item_parameters": false,
+        "operation_or_path_servers": false,
+        "non_json_responses": false
+      },
+      "seconds": 6.4
+    },
+    {
+      "id": "bbc.com",
+      "openapi": "3.0.0",
+      "status": "ok",
+      "spec_version": "openapi 3.0.0",
+      "ops_total": 25,
+      "generated": 23,
+      "skipped": {
+        "no_json_response": 2
+      },
+      "lossy": {},
+      "ignored": {},
+      "compile_failures": [],
+      "inert_failures": [],
+      "exec_ok": 23,
+      "exec_skipped_required_body": 0,
+      "exec_failures": [],
+      "features": {
+        "header_params": false,
+        "array_query_params": true,
+        "path_item_parameters": false,
+        "operation_or_path_servers": false,
+        "non_json_responses": true
+      },
+      "seconds": 156.8
+    },
+    {
+      "id": "bbci.co.uk",
+      "openapi": "3.0.0",
+      "status": "load_failed:spec_invalid",
+      "spec_version": null,
+      "ops_total": 30,
+      "generated": 0,
+      "skipped": {},
+      "lossy": {},
+      "ignored": {},
+      "compile_failures": [],
+      "inert_failures": [],
+      "exec_ok": 0,
+      "exec_skipped_required_body": 0,
+      "exec_failures": [],
+      "features": {},
+      "load_error": "ResolutionError",
+      "seconds": 0.1
+    },
+    {
+      "id": "bclaws.ca:bclaws",
+      "openapi": "3.0.0",
+      "status": "ok",
+      "spec_version": "openapi 3.0.0",
+      "ops_total": 7,
+      "generated": 0,
+      "skipped": {
+        "no_json_response": 7
+      },
+      "lossy": {},
+      "ignored": {},
+      "compile_failures": [],
+      "inert_failures": [],
+      "exec_ok": 0,
+      "exec_skipped_required_body": 0,
+      "exec_failures": [],
+      "features": {
+        "header_params": false,
+        "array_query_params": false,
+        "path_item_parameters": false,
+        "operation_or_path_servers": false,
+        "non_json_responses": false
+      },
+      "seconds": 0.1
+    },
+    {
+      "id": "bhagavadgita.io",
+      "openapi": "3.0.0",
+      "status": "load_failed:spec_invalid",
+      "spec_version": null,
+      "ops_total": 6,
+      "generated": 0,
+      "skipped": {},
+      "lossy": {},
+      "ignored": {},
+      "compile_failures": [],
+      "inert_failures": [],
+      "exec_ok": 0,
+      "exec_skipped_required_body": 0,
+      "exec_failures": [],
+      "features": {},
+      "load_error": "ValidationError",
+      "seconds": 0.0
+    },
+    {
+      "id": "bigoven.com",
+      "openapi": "3.0.0",
+      "status": "load_failed:spec_invalid",
+      "spec_version": null,
+      "ops_total": 66,
+      "generated": 0,
+      "skipped": {},
+      "lossy": {},
+      "ignored": {},
+      "compile_failures": [],
+      "inert_failures": [],
+      "exec_ok": 0,
+      "exec_skipped_required_body": 0,
+      "exec_failures": [],
+      "features": {},
+      "load_error": "ResolutionError",
+      "seconds": 0.2
+    }
+  ]
+}
