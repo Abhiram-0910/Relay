@@ -336,7 +336,7 @@ CALLBACK_SECRET=         # Worker + GitHub Actions (same value) — authenticate
 
 ## Known Technical Debt
 - [ ] Each endpoint generates its own standalone client class/file — not yet merged into one cohesive client package per job. Likely to happen alongside sandbox execution (Task 8), once there's a real file tree to hand the sandbox.
-- [ ] No path-param name sanitization (assumes the OpenAPI param name is already a valid Python identifier — true for Petstore, not guaranteed generally).
+- [x] Param names are sanitised: every spec-derived identifier goes through `_safe_identifier` (Step 6, F5, `03c8b2c`), and class/model names through `_safe_class_name` (`2edfe6e`). Collisions (a param named `self`, or the same name in path and query) are still unhandled; since `2edfe6e` they are skipped with `generator_error: SyntaxError` instead of shipped (piece 4c).
 - [ ] Query/path param types only cover JSON scalar types (string/integer/number/boolean); arrays/objects fall back to `str`.
 - [ ] Nested sub-schemas (e.g. a "Category" object embedded in multiple endpoints' Pet schema) are regenerated independently per endpoint with no cross-endpoint dedup — harmless while each endpoint is its own file, would need addressing if/when client files get merged.
 - [ ] datamodel-code-generator's own naming heuristic can produce odd class names for array/root responses (e.g. truncates a trailing "s" when wrapping a list) — cosmetic, still valid Python, not something our code controls.
