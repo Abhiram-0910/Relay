@@ -271,6 +271,36 @@ def test_openai_compatible_request_shape_and_parse() -> None:
     assert rf["json_schema"]["schema"]["additionalProperties"] is False
 
 
+def test_openai_chat_payload_omits_temperature_and_max_tokens_by_default() -> None:
+    """Reasoning models reject a non-default temperature, so the body carries none unless asked."""
+    payload = correct._openai_chat_payload("o3", "sys", "usr", correct._PATCH_JSON_SCHEMA)
+    assert "temperature" not in payload
+    assert "max_tokens" not in payload
+    assert payload["messages"] == [{"role": "system", "content": "sys"},
+                                   {"role": "user", "content": "usr"}]
+    assert payload["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {"name": "client_patch", "schema": correct._PATCH_JSON_SCHEMA, "strict": True},
+    }
+
+
+def test_openai_chat_payload_includes_temperature_only_when_passed() -> None:
+    payload = correct._openai_chat_payload("gpt-4o", "s", "u", {}, temperature=0.0)
+    assert payload["temperature"] == 0.0
+
+
+def test_openai_compatible_adapter_sends_no_temperature() -> None:
+    from unittest.mock import patch as mock_patch
+
+    fixed = {"models_py": "", "client_py": ""}
+    corrector = correct.openai_compatible_corrector("https://api.openai.com/v1")
+    with mock_patch("app.correct.requests.post", return_value=_fake_chat_response(fixed)) as post:
+        corrector("o3", {"base_url": OPEN_METEO_BASE_URL, "endpoint": "/v1/forecast"},
+                  _report(sandbox.STATUS_CALL_FAILED), "# m\n", "# c\n", api_key="sk-user")
+    payload = post.call_args.kwargs["json"]
+    assert "temperature" not in payload and "max_tokens" not in payload
+
+
 def test_openai_compatible_registered_base_urls() -> None:
     """OpenAI/Grok/OpenRouter share the adapter but must hit their own base URLs."""
     from unittest.mock import patch as mock_patch

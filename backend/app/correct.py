@@ -230,6 +230,24 @@ _PATCH_JSON_SCHEMA = {
 }
 
 
+def _openai_chat_payload(model: str, system: str, user: str, schema: dict, *,
+                         temperature: float | None = None) -> dict:
+    """The OpenAI-family Chat Completions body with strict json_schema output. `temperature` is
+    omitted unless passed: reasoning models reject any non-default value. No max_tokens either —
+    the output is two whole source files, so the model's own cap is the only sane bound."""
+    payload = {
+        "model": model,
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {"name": "client_patch", "schema": schema, "strict": True},
+        },
+    }
+    if temperature is not None:
+        payload["temperature"] = temperature
+    return payload
+
+
 def openai_compatible_corrector(base_url: str) -> Corrector:
     """Factory: a corrector speaking the OpenAI Chat Completions protocol at `base_url`. One
     implementation serves OpenAI, Grok (xAI), and OpenRouter — identical wire protocol, differing
@@ -242,20 +260,10 @@ def openai_compatible_corrector(base_url: str) -> Corrector:
                   models_code: str, client_code: str, *, api_key: str | None = None) -> Patch:
         if not api_key:
             raise ValueError("openai_compatible corrector requires a BYOK api_key")
-        payload = {
-            "model": model_id,
-            "messages": [
-                {"role": "system", "content": _SYSTEM_INSTRUCTION},
-                {"role": "user",
-                 "content": _build_prompt(call_spec, report, models_code, client_code)},
-            ],
-            "temperature": 0.0,  # deterministic-as-possible patches, same as Gemini
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {"name": "client_patch", "schema": _PATCH_JSON_SCHEMA,
-                                "strict": True},
-            },
-        }
+        payload = _openai_chat_payload(
+            model_id, _SYSTEM_INSTRUCTION,
+            _build_prompt(call_spec, report, models_code, client_code), _PATCH_JSON_SCHEMA,
+        )
         try:
             resp = requests.post(
                 url, json=payload,
