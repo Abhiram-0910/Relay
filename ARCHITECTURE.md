@@ -352,3 +352,139 @@ CALLBACK_SECRET=         # Worker + GitHub Actions (same value) — authenticate
 - [ ] Live-validation currently covers only idempotent GET endpoints whose required params can be synthesized from spec example/default, plus a hardcoded demo-param hook for Open-Meteo `/v1/forecast` (`_DEMO_TARGETS` in `ci_runner.py`). General param synthesis + safe handling of non-GET endpoints is a later task; non-synthesizable endpoints are honestly reported `generated_only`.
 - [ ] No frontend yet — deferred to Task 13 (Next.js + Tailwind on Vercel), to be built once against the proven Worker API.
 - [ ] Local dev venv created via pip virtualenv workaround (sudo had no TTY for `apt install python3.14-venv`) — install `python3.14-venv` properly on the Oracle VM at deploy time for clean, reproducible provisioning.
+
+---
+
+## Phase 3 — verified-live USP and target auth — SCOPED 2026-10-19, NOT YET BUILT
+
+### (a) USP decision
+
+**Headline: verified-live generation.** Every generated operation is called live from the isolated
+sandbox and carries a per-operation receipt: spec hash, endpoint, status, response-shape hash,
+timestamp. A failing operation produces a "where the spec lies" report with a proposed OpenAPI
+overlay that would make the spec match the observed API.
+
+**Outputs:** a typed Python client now; later an MCP server in which every tool carries its own live
+receipt. Scheduled re-verification (drift watch) is a later feature built on top. It is NOT the pitch.
+
+**Research basis:** ~14 web searches, 2026-10-17 to 2026-10-18, mostly standard search mode (one extended search).
+- Drift monitoring is crowded: FlareCanary (free tier), DriftSignal, openapi-drift, Beeceptor,
+  Schemathesis, and Speakeasy's generated contract tests.
+- Optic's repo was archived 2026-01.
+- Stainless (acquired by Anthropic 2026-05) wound down its hosted generator. Fern (acquired by Postman 2026-01) continues to operate; third-party comparisons report a free tier capped at 50 endpoints (unverified).
+- Open-source prior art: stainful, a Stainless-compatible Python SDK and MCP generator. Its README describes verifying output by comparing it with real Stainless-generated SDKs, not by calling live APIs (not independently checked).
+- MCP generators: stacklok mcp-builder states it does not exercise the server against the real API. openapi2mcp ships an opt-in live-call smoke test (`--call`); by default a pass means only that the server initialises and its tool schemas check out. Live calling alone is therefore not unclaimed ground.
+- The AutoMCP study (arXiv 2507.16044) attributes runtime tool failures to spec defects that only
+  live calls catch: wrong or missing auth metadata, the Bearer prefix, parameter type mismatches.
+
+**Limits of that research:** absence of evidence from search is not proof. Speakeasy's contract tests
+are the closest prior art, and we did not confirm whether they run live by default.
+
+**What is claimable:** not 'generation' and not 'calls the live API', but proof: an isolated sandbox independent of the model that wrote the code, self-repair of failures, a per-operation re-runnable receipt, and a spec-vs-reality report. README and UI claims must say exactly that.
+
+**Rules for how this is described:**
+- Never claim "no one else in the world" does this.
+- The repo is public, so there is no secret recipe. The moat is the receipts, time, and being the
+  neutral free option, and it is weak.
+- Correction to the owner's audit handoff (an external document, not in this repo): an agentic LLM with a sandbox CAN call an API live once.
+  What it cannot give is a verifier independent of the model that wrote the code, a re-runnable
+  receipt, and a fixed public procedure.
+
+### (b) Defects confirmed by the 2026-10-18 audit (all open until fixed)
+
+- `backend/app/generate.py:179` appends `| None = None` to every query param and ignores the spec's
+  `required` flag.
+- `_py_type` (`backend/app/generate.py:86`) collapses array and enum params to `str`, so enum
+  validation is lost, and `explode: false` is not handled.
+- Not a bug: Open-Meteo's own spec declares latitude/longitude as `type: string`, and the generator
+  reproduces that faithfully.
+- Live verification today covers 1 operation of 1 API, through the hardcoded `_DEMO_TARGETS` hook
+  (`backend/app/ci_runner.py:140`). "Verified live" is a demo until general param synthesis lands.
+
+### (c) Target-API auth design (step 6; decided with the owner 2026-10-19)
+
+**Owner's constraints:**
+1. **Safe methods only.** Only GET and HEAD are ever called with a user credential.
+   POST/PUT/PATCH/DELETE stay `generated_only`.
+2. **Delivery reuses the BYOK pattern:** browser → Worker over HTTPS → single-use KV entry
+   `target:{runId}` with a short TTL, deleted on first read, fetched once by the Action with
+   `Bearer CALLBACK_SECRET`. No credential value is ever a parameter of `buildDispatchInputs`, and a
+   test asserts the dispatch inputs contain no credential. Only a `has_target_auth` flag goes
+   through dispatch.
+3. **Schemes:** apiKey (header or query), bearer, and basic, as declared in the spec's
+   `securitySchemes`. OAuth2 flows, cookies and mTLS are explicit non-goals and end `generated_only`
+   with a clear message.
+4. The credential enters the sandbox as an env var only. Egress stays pinned to the single target
+   host. The generated client reads the env var and never embeds the value.
+5. The credential never enters any LLM prompt. The corrector's `<<<FAILURE_DETAIL>>>` block is
+   scrubbed of known credential values and common token patterns.
+6. **One scrubber** applies to Action logs, `error_detail`, the validation report, progress callbacks
+   and the downloadable client.
+7. **AST validation of corrector output is REQUIRED for this step.** F7's deferred half moves from
+   deferred to required.
+8. **UI:** an honest receipt like BYOK's (received at, used once, deleted at), a warning to use a test
+   or read-only key, and a revoke reminder.
+9. **Order:** general param synthesis (step 5) before auth.
+10. **Receipt:**
+    - a throwaway key on a harmless authenticated API;
+    - a grep of the real public Action log for the key;
+    - a second fetch of the credential returns 404;
+    - the scrubber catches an API that echoes the key in an error body.
+
+**Architect's amendments (accepted):**
+- **A1. GET/HEAD-only is enforced mechanically,** because the egress pin restricts hosts, not HTTP
+  verbs. Whenever a credential is present, the sandbox runner wraps `requests.Session.request` to
+  refuse every other method. The AST validator bans `urllib`, `http.client`, `socket`, and any
+  `requests` call except `get`/`head`. Documented residual: GET is safe only by convention, and
+  some APIs mutate on GET.
+- **A2.** The per-operation opt-in for mutating methods is only a default-off hook in step 6. The
+  opt-in UI needs an idempotency/cleanup design and is a separate piece.
+- **A3. Response data is a bigger leak than the key.** For authenticated runs, store, log and prompt
+  only the status, a response-shape hash and the failing field paths, never values. The sandbox
+  image installs pydantic unpinned within the major version (`pip install requests==2.* pydantic==2.*`
+  in `backend/sandbox/Dockerfile`, on the floating `python:3.12-slim` base), and generate.yml rebuilds
+  that image on every run, so each run gets the newest 2.x at build time: pydantic 2.14.1
+  (pydantic-core 2.50.1) in run 39157080364 (2026-10-18), and 2.14.1 is the newest 2.x on PyPI as of
+  2026-10-19. Checked in that image: the sandbox pydantic's `ValidationError` text includes
+  `input_value` (the raw response value), and `e.errors(include_input=False)` omits it, so build
+  details with `e.errors(include_input=False)`.
+- **A4. Every credential form is scrubbed:** raw, URL-encoded, base64 (basic auth), and the
+  Bearer/`Authorization`-header form. A query-string apiKey leaks through `requests` exception text,
+  which contains the full URL. Test against an API that echoes each form.
+- **A5. Pass the credential by name, not value:** `docker run -e NAME` (inherited from the process
+  env), never `-e NAME=value`. Emit `::add-mask::` after the fetch. How the add-mask line renders in
+  the log is UNVERIFIED; the grep receipt decides.
+- **A6. AST validation is defense in depth, not proof.** Isolation is the real boundary. The validator
+  rules:
+  - a fixed import allowlist;
+  - no dunder attributes;
+  - no `getattr`/`setattr`/`eval`/`exec`/`compile`/`open`/`print`/`logging`;
+  - env reads only of the one declared variable name.
+
+  A rejected patch consumes a ladder attempt with code `corrector_patch_rejected`, with no silent
+  retry. This is the same for BYOK and shared keys and applies to all runs, because patched code
+  ships in the downloadable client.
+
+**Expectations:**
+- Authenticated verification will mostly cover parameterless GETs and operations with spec examples.
+- Operations with path ids such as `/users/{id}` stay `generated_only`. Chaining list → get is
+  possible later.
+- The 20–30 spec corpus for step 5 runs through local `ci_runner`, because the deployed Worker caps
+  runs at 3/day.
+- Step 6 needs two free APIs with self-serve keys and published OpenAPI specs: one that takes the key
+  in the query string and one that takes a bearer token. Find them by search when step 6 starts.
+
+### (d) Known residuals
+
+**OpenAI billing is inactive on the project's OpenAI key (`billing_not_active`).** As a result:
+1. The temperature omission (`7d7f519`) is verified by hermetic tests only. Its live receipt is
+   pending.
+2. The 400 json_schema rejection rule in `correct.py` (`bc1f210`, narrowed in `bfe7d7f`) is matched
+   against a SYNTHETIC body and must be re-checked on a funded probe.
+3. The 70 ids the `/api/models` OpenAI filter keeps are "not known broken", not verified working.
+   The unresolved families (audio, search, pro, live) need a funded probe.
+
+**Other residuals:**
+- The probe script's piece 3b-fix (abort on billing errors) is parked.
+- The Anthropic, Grok and OpenRouter adapters remain live-unverified. An OpenRouter free-key receipt
+  is planned.

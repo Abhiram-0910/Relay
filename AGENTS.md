@@ -6,11 +6,13 @@ Claude reads this at the START of every new session to understand what happened 
 ---
 
 ## Project State
-**Last updated:** 2026-08-11 (Session 11)
+**Last updated:** 2026-10-19 (Session 12) — **Phase 3 in progress**
 **Current branch:** main
-**Overall status:** MVP is **complete and live-verified end-to-end, frontend included** (see Session 2 close, 2026-07-26). Vercel frontend (`https://relay-cyan-rho.vercel.app`) → Cloudflare Worker (`https://relay-worker.abhiram-dev.workers.dev`) → GitHub Actions → Docker sandbox → Gemini self-correction → KV, with per-IP rate limiting, run-id isolation, and a code viewer. A real browser run polls to `Succeeded` / `verified_pass` and shows the real generated client. Nothing in the MVP is claimed-but-unproven. Tests: backend 33 · worker 12 · frontend 7 hermetic, all green.
+**Overall status:** MVP is **complete and live-verified end-to-end, frontend included** (see Session 2 close, 2026-07-26). Vercel frontend (`https://relay-cyan-rho.vercel.app`) → Cloudflare Worker (`https://relay-worker.abhiram-dev.workers.dev`) → GitHub Actions → Docker sandbox → Gemini self-correction → KV, with per-IP rate limiting, run-id isolation, and a code viewer. A real browser run polls to `Succeeded` / `verified_pass` and shows the real generated client. Nothing in the MVP is claimed-but-unproven. Tests (as of Session 12): backend 139 · worker 52 · frontend 40 hermetic, all green.
 
 **Phase 2 (scoped 2026-07-26, build starting Session 3, 2026-07-27):** BYOK security infrastructure → multi-provider LLM (Gemini/OpenAI/Anthropic/Grok/OpenRouter) → honest error taxonomy → full QA re-verification → visual/UX pass → `/security-review` + remediation → final retest and deliver. **Progress:** Step 1 (BYOK) CLOSED live (Session 4). Step 2 (multi-provider) CLOSED live (Session 6, commits `4866d2a`→`7f846fb`) — see Session 6 for the full receipt; one accepted gap logged there (corrector proven live independently of the deployed pipeline, not together in one run — no test-injection hook exists in the public API for that). Step 3 (honest error taxonomy) CLOSED (Session 7, commits `caf86cf`→`dc5e5cf`) — see Session 7 for the full receipt; one deliberate scope boundary logged there at the time (per-attempt corrector codes rendered as raw tokens in the compact attempts list), closed the next step (Step 4 gave `status.ts` labels to all 7 corrector codes). Step 4 (full QA pass) CLOSED (Session 8, commits `bbb35fd`→`572c18d`) — see Session 8 for the full receipt, including a real production bug (the Action's infra-failure watchdog silently overwriting every classified error) found live and fixed, not just a coverage-extension step. Step 5 (visual/UX pass) CLOSED (Session 9, commits `c21ca2a`→`8ce5b3d`) — see Session 9 for the full receipt and a logged pattern-to-watch (`status.ts` caught incomplete twice now). Step 6 (security review) CLOSED (Session 10, commits `03c8b2c`→`c09b7ee`) — see Session 10 for the full receipt, including a prominent standalone callout for F5 (the most severe finding in the project: RCE via generated code an end user downloads and trusts) and an explicit note that the scan's own adversarial verification panel never completed, substituted with an independent manual trace. **Step 7 (final retest, README, deliver) CLOSED (Session 11, commits `19b2a31`→`9e28f98`)** — see Session 11 for the full receipt, including a full residuals audit across Sessions 1–10 and two accumulated documentation inconsistencies caught and fixed. **Phase 2 is now fully closed** — every step has its own live receipt, nothing claimed-but-unproven remains.
+
+**Phase 3 (scoped 2026-10-19, in progress):** verified-live generation with per-operation receipts → generator fidelity → general param synthesis → target-API auth → receipt schema + MCP output. Design: ARCHITECTURE.md "Phase 3 — verified-live USP and target auth". Checklist: TODO.md Phase 3 sprint. **Progress:** pieces 0, 1, 2 (+2b, 2c), 3a, 3b and 3c are done (`e1ba802`→`bfe7d7f`, see Session 12). Next: piece 4 (generator fidelity). Open live-receipt gaps: OpenAI billing is inactive on the project's OpenAI key, so 3a and the 400 json_schema rule are hermetic-only.
 
 ---
 
@@ -369,5 +371,72 @@ This bug predates Step 3 — the race between the two steps' callbacks always ex
 **Tests:** backend **83** · worker **50** · frontend **37** (all unchanged from Step 6 — Step 7 touched documentation only, no application code).
 
 **Phase 2 is now fully closed.** Steps 1–7 each have their own live receipt; nothing in Phase 2 is claimed-but-unproven.
+
+### Session 12 — 2026-10-18 → 2026-10-19 — Phase 3 scoped; pieces 0–3c built (Claude Code)
+**Goal:** Audit the closed Phase 2 codebase, decide the Phase 3 USP, fix what the audit found in BYOK
+and the OpenAI-family adapter, and scope the target-API auth design before any code for it.
+
+**Completed:**
+
+| Piece | Commit | What it did |
+|-------|--------|-------------|
+| 0 hygiene | `e1ba802` | Ignore Windows `Zone.Identifier` files and `worker/.wrangler` state. |
+| 1 CI | `9e8f6ed` | Hermetic backend/worker/frontend suites on push and pull_request. First verified on a throwaway `ci-check` branch, since deleted. |
+| 2 BYOK fail-closed | `22a2dae` | A BYOK run whose key can't be fetched fails with `byok_key_missing` / `byok_fetch_failed` and never reaches the corrector on the shared key. |
+| 2b | `cec6e9c` | A 404 on the retry attempt (after a network error or 5xx) raises `ByokFetchError`: the lost first response may have delivered and deleted the key. |
+| 2c | `4dffd12` | Runners pinned to `ubuntu-24.04` (`ubuntu-latest` moves to Ubuntu 26 on 2026-10-19). |
+| 3a | `7d7f519` | `_openai_chat_payload` extracted. No `temperature` and no `max_tokens` by default, because reasoning models reject a non-default temperature. |
+| 3b | `29a5261` | `scripts/probe_openai_models.py` (getpass-only key, scrubbed output, abort on a first 401/403) plus the 133-id `/v1/models` fixture. |
+| 3c-i | `bf94b09` | Substring denylist of definitively non-chat OpenAI families in `worker/src/models.js`. |
+| 3c-ii | `bc1f210` | `CorrectorModelError` → `model_unsupported`, matched against the real 404/403 probe bodies in `worker/test/fixtures/openai-rejections.json`; `errors.ts` / `status.ts` updated. |
+| 3c-iii | `bfe7d7f` | 400 rule narrowed (never on `invalid_json_schema` / "Invalid schema"); `OPENAI_KNOWN_DEAD_IDS` (20 exact ids that 404'd in the probe). Filter: 70 kept / 63 excluded of 133. |
+
+**Receipts:**
+- generate.yml run 39157080364: `RELAY_HAS_BYOK: true`, then `FINAL: failed (byok_key_missing)`, no
+  corrector activity.
+- CI run 39230879889 on `bfe7d7f`: all three jobs green on ubuntu-24.04.
+- Worker deployed: version `fa935278-3e3a-4c19-a406-5e5a9a5acb0d`. The
+  `/api/runs/x/byok-key` propagation probe returned 401.
+- Deployed `/api/models` with a real key returned 70 ids, 0 non-chat, 0 known-dead.
+- Vercel had created no deployment for `bfe7d7f` when last checked. Unresolved; Vercel settings were
+  not touched.
+
+**Tests:** backend **139** · worker **52** · frontend **40** (was 83 · 50 · 37 at Session 11).
+`tsc --noEmit` and `next lint` clean.
+
+**Decisions:**
+- **USP: verified-live generation with per-operation receipts.** Drift watch is a later feature, not
+  the pitch. Research basis, limits and wording rules: ARCHITECTURE.md Phase 3 (a).
+- **Target-API auth design** (owner's 10 constraints plus accepted amendments A1–A6): ARCHITECTURE.md
+  Phase 3 (c). Ordered after general param synthesis.
+
+**Problems found:**
+- **BYOK fell back silently.** A BYOK run whose key couldn't be fetched (404, 401, 5xx, network) used
+  to continue on the shared Gemini key. Fixed fail-closed in piece 2 / 2b.
+- **`make` is not installed in WSL,** so `make sandbox-build` fails. The images were built with the
+  two `docker build` commands from the Makefile directly.
+- **`rtk` reports misleading exit codes,** because its filtered output reflects the wrapper, not the
+  command. Receipts in this session use raw commands with explicit exit codes.
+- **The probe retried a non-transient error.** It handled `429 billing_not_active` as an ordinary
+  rate limit and retried it for ~25 minutes. Parked as 3b-fix.
+- **The audit handoff was wrong about live calls.** The owner's audit handoff (an external document, not in this repo) claimed an LLM cannot run
+  code live. An agentic LLM with a sandbox can call an API once. The real difference is an
+  independent verifier, a re-runnable receipt and a fixed public procedure. See ARCHITECTURE.md
+  Phase 3 (a).
+
+**What is left:**
+- 3b-fix (parked).
+- Piece 4: generator fidelity.
+- Piece 5: general param synthesis; retire `_DEMO_TARGETS`.
+- Piece 6: target auth.
+- Piece 7: receipt schema and MCP output.
+- OpenRouter free-key live receipt.
+- The Phase 3 hygiene backlog in TODO.md.
+
+**Funded-OpenAI-probe residuals:** temperature omission, the synthetic 400 rule, and the unresolved
+families. See ARCHITECTURE.md Phase 3 (d).
+
+**Next piece:** Piece 4, generator fidelity. Honor `required` (`generate.py:179`), arrays/enums and
+`explode: false` in `_py_type` (`generate.py:86`), and test on ~30 real specs.
 
 <!-- Copy the block above for each new session -->

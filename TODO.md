@@ -5,7 +5,41 @@ Read this at the start of every session to know what to work on next.
 
 ---
 
-## 🔴 Current Sprint (Do This Now) — Phase 2: BYOK → multi-provider → hardening
+## 🔴 Current Sprint — Phase 3: verified-live USP → generator fidelity → target auth
+Scoped 2026-10-19. Design and residuals: ARCHITECTURE.md, "Phase 3 — verified-live USP and target
+auth". The Phase 2 sprint below is closed and kept as history.
+
+- [x] **Piece 0 — hygiene** (`e1ba802`): ignore Windows `Zone.Identifier` files and `worker/.wrangler` state.
+- [x] **Piece 1 — CI on push** (`9e8f6ed`): hermetic backend, worker and frontend suites run on push and pull_request.
+- [x] **Piece 2 — BYOK fail-closed** (`22a2dae`): a BYOK run whose key can't be fetched fails with `byok_key_missing` / `byok_fetch_failed` instead of silently falling back to the shared key.
+  - [x] **2b** (`cec6e9c`): a 404 on the retry attempt raises `ByokFetchError`. The first response may have been lost after the Worker delivered and deleted the key, so only a first-attempt 404 is `byok_key_missing`.
+  - [x] **2c** (`4dffd12`): Actions runners pinned to `ubuntu-24.04` ahead of `ubuntu-latest` moving to Ubuntu 26 on 2026-10-19.
+  - **Live receipt:** generate.yml run 39157080364 logs `RELAY_HAS_BYOK: true`, then `FINAL: failed (byok_key_missing)`, with no corrector activity.
+- [x] **Piece 3a — temperature dropped** (`7d7f519`): `_openai_chat_payload` sends no `temperature` and no `max_tokens` by default. Verified by hermetic tests only; live receipt pending (OpenAI billing inactive).
+- [x] **Piece 3b — probe script** (`29a5261`): `scripts/probe_openai_models.py` plus the 133-id fixture. First run: 111/133 returned `billing_not_active`; only the 22 404/403 records carry evidence.
+- [x] **Piece 3c — filter + `model_unsupported`** (`bf94b09`, `bc1f210`, `bfe7d7f`): substring denylist plus `OPENAI_KNOWN_DEAD_IDS` in `worker/src/models.js` (70 kept / 63 excluded of 133); `CorrectorModelError` → `model_unsupported` across `correct.py`, `errors.ts` and `status.ts`; 400 rule narrowed so our own invalid-schema errors are never reported as model_unsupported. Worker deployed (version `fa935278-3e3a-4c19-a406-5e5a9a5acb0d`). **Live receipt:** deployed `/api/models` with a real key returned 70 ids, 0 non-chat, 0 known-dead.
+- [ ] **3b-fix — parked:** the probe must abort on non-transient billing errors (`billing_not_active`) instead of retrying them.
+- [ ] **Piece 4 — generator fidelity:** honor `required` (`generate.py:179`), arrays and enums in `_py_type` (`generate.py:86`), `explode: false`. Test on ~30 real specs.
+- [ ] **Piece 5 — general param synthesis:** retire `_DEMO_TARGETS` (`ci_runner.py:140`); publish a corpus table (spec, operations, verified / generated_only / failed).
+- [ ] **Piece 6 — target auth,** per ARCHITECTURE.md Phase 3 (c), constraints 1–10 and amendments A1–A6.
+- [ ] **Piece 7 — receipt schema + MCP output:** the per-operation receipt (spec hash, endpoint, status, response-shape hash, timestamp), and an MCP server where every tool carries its receipt.
+- [ ] **OpenRouter free-key live receipt** for the `openai_compatible` adapter.
+
+### Phase 3 hygiene backlog
+- [ ] LICENSE file (none in the repo today).
+- [ ] Dependabot config (`.github/dependabot.yml` does not exist).
+- [ ] Security headers on the frontend.
+- [ ] Favicon and OG metadata.
+- [ ] Lock the Worker's CORS to the frontend origin. This is not a security boundary: any non-browser client ignores CORS.
+- [ ] A live d/h/m/s countdown in the rate-limit banner. This also fixes the "1 hours" plural bug at `frontend/app/page.tsx:143-144`: the number uses `Math.max(1, …)` but the plural check doesn't, so a retryAfter under 30 min renders "1 hours".
+- [ ] Pin backend/requirements.txt and the sandbox image's dependencies; a receipt is only reproducible against known versions.
+- [ ] Discord logging, one webhook per channel.
+- [ ] Per-user run history.
+- [ ] Scoped chatbot.
+
+---
+
+## ✅ Closed Sprint — Phase 2: BYOK → multi-provider → hardening
 MVP (everything below in ✅ Completed) is done and live-verified. This sprint is the phase scoped
 verbally at the end of Session 2 (2026-07-26), now written up properly — see AGENTS.md Session 3
 and ARCHITECTURE.md's "BYOK security design" section for the full spec. Nothing here is built yet;
