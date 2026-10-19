@@ -7,7 +7,6 @@ response are skipped (reported, not generated). Path params, query params,
 and JSON request bodies are supported; other content types are not.
 """
 import json
-import keyword
 import re
 from pathlib import Path
 from typing import Iterator
@@ -15,6 +14,8 @@ from typing import Iterator
 import jinja2
 from datamodel_code_generator import DataModelType, InputFileType
 from datamodel_code_generator import generate as generate_models
+
+from app.naming import _IDENT_RE, _safe_identifier, _to_pascal_case  # noqa: F401 (re-exported)
 
 HTTP_METHODS = {"get", "post", "put", "patch", "delete", "options", "head"}
 JSON_TYPE_TO_PY = {"integer": "int", "string": "str", "number": "float", "boolean": "bool"}
@@ -29,19 +30,9 @@ class UnsupportedOperation(ValueError):
 # untrusted spec and get spliced into GENERATED PYTHON SOURCE — an identifier position for the
 # first two, and (see _safe_path_fstring) a live f-string expression position for the path.
 # Neither is validated by the OpenAPI schema itself, so a crafted spec is attacker-controlled code
-# unless every one of these is routed through the helpers below before reaching CLIENT_TEMPLATE.
-_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# unless every one of these is routed through the helpers below (and app.naming) before reaching
+# CLIENT_TEMPLATE.
 _BRACE_GROUP_RE = re.compile(r"\{([^{}]*)\}")
-
-
-def _safe_identifier(name: str, fallback: str) -> str:
-    """A spec-supplied name, made safe to use as a Python identifier in generated source. Spec
-    text is attacker-controlled input, not code — anything that isn't already a bare identifier
-    (and not a Python keyword) is replaced with a deterministic fallback rather than trusted
-    verbatim."""
-    if _IDENT_RE.match(name) and not keyword.iskeyword(name):
-        return name
-    return fallback
 
 
 def _safe_class_name(name: str, prefix: str) -> str:
@@ -117,11 +108,6 @@ class {{ class_name }}:
         return {{ response_model }}.model_validate(response.json())
 '''
 )
-
-
-def _to_pascal_case(name: str) -> str:
-    parts = [p for p in re.split(r"[^a-zA-Z0-9]+", name) if p]
-    return "".join(p[:1].upper() + p[1:] for p in parts)
 
 
 def _py_type(schema: dict) -> str:

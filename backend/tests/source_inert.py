@@ -22,6 +22,7 @@ ALLOWED_IMPORTS = frozenset({
     (0, "decimal"),
     (0, "ipaddress"),
     (0, "uuid"),
+    (0, "urllib.parse"),  # params.SERIALISER_SOURCE: `from urllib.parse import quote as _relay_quote`
     (1, "models"),
 })
 
