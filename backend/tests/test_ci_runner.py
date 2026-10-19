@@ -30,29 +30,63 @@ def test_resolve_base_url_demo_fallback_when_servers_empty() -> None:
     assert _resolve_base_url(spec, "/unknown") is None
 
 
+def _kwargs_for(parameters: list[dict], path: str = "/x", path_item_parameters: list[dict] = ()):
+    """_required_kwargs over the generator's own parameter table for this operation."""
+    from app.naming import _safe_identifier
+    from app.params import plan_parameters
+
+    path_item = {"get": {"parameters": parameters}, "parameters": list(path_item_parameters)}
+    table = plan_parameters(path_item, path_item["get"], alias_prefix="Op",
+                            sanitise=_safe_identifier).to_jsonable()
+    return _required_kwargs({"paths": {path: path_item}}, path, "get", table)
+
+
 def test_required_kwargs_from_example_and_default() -> None:
-    spec = {"paths": {"/x": {"get": {"parameters": [
-        {"name": "a", "required": True, "example": 5},
-        {"name": "b", "required": True, "schema": {"default": "hi"}},
-        {"name": "c", "required": False, "schema": {}},  # optional -> omitted
-    ]}}}}
-    assert _required_kwargs(spec, "/x", "get") == {"a": 5, "b": "hi"}
+    assert _kwargs_for([
+        {"name": "a", "in": "query", "required": True, "example": 5},
+        {"name": "b", "in": "query", "required": True, "schema": {"default": "hi"}},
+        {"name": "c", "in": "query", "required": False, "schema": {}},  # optional -> omitted
+    ]) == {"a": 5, "b": "hi"}
 
 
 def test_required_kwargs_uses_demo_hook_for_unfillable_required() -> None:
     # latitude/longitude are required with no example -> filled from the demo registry.
-    spec = {"paths": {"/v1/forecast": {"get": {"parameters": [
-        {"name": "latitude", "required": True, "schema": {"type": "string"}},
-        {"name": "longitude", "required": True, "schema": {"type": "string"}},
-    ]}}}}
-    assert _required_kwargs(spec, "/v1/forecast", "get") == {"latitude": 52.52, "longitude": 13.41}
+    assert _kwargs_for([
+        {"name": "latitude", "in": "query", "required": True, "schema": {"type": "string"}},
+        {"name": "longitude", "in": "query", "required": True, "schema": {"type": "string"}},
+    ], path="/v1/forecast") == {"latitude": 52.52, "longitude": 13.41}
 
 
 def test_required_kwargs_returns_none_when_unsynthesizable() -> None:
-    spec = {"paths": {"/x": {"get": {"parameters": [
-        {"name": "mystery", "required": True, "schema": {"type": "string"}},
-    ]}}}}
-    assert _required_kwargs(spec, "/x", "get") is None
+    assert _kwargs_for([
+        {"name": "mystery", "in": "query", "required": True, "schema": {"type": "string"}},
+    ]) is None
+
+
+def test_required_kwargs_are_keyed_by_local_name_and_cover_every_location() -> None:
+    assert _kwargs_for([
+        {"name": "id", "in": "query", "required": True, "example": "q"},
+        {"name": "page-size", "in": "query", "required": True, "example": 10},
+        {"name": "X-Req", "in": "header", "required": True, "example": "h"},
+        {"name": "session", "in": "cookie", "required": False, "example": "c"},  # ignored by the plan
+    ], path_item_parameters=[{"name": "id", "in": "path", "required": True, "example": 7}]) == {
+        "id": 7, "id_query": "q", "param_2": 10, "param_3": "h"}
+
+
+def test_required_kwargs_synthesise_enum_and_array_values() -> None:
+    assert _kwargs_for([
+        {"name": "unit", "in": "query", "required": True, "schema": {"type": "string", "enum": [None, "c", "f"]}},
+        {"name": "tags", "in": "query", "required": True,
+         "schema": {"type": "array", "items": {"type": "string", "enum": ["t1", "t2"]}}},
+        {"name": "ids", "in": "query", "required": True, "schema": {"type": "array", "example": 3}},
+        {"name": "raw", "in": "query", "required": True, "schema": {"type": "array", "items": {}}},
+    ]) is None  # `raw` has nothing to synthesise from -> generated-only, as before
+    assert _kwargs_for([
+        {"name": "unit", "in": "query", "required": True, "schema": {"type": "string", "enum": [None, "c", "f"]}},
+        {"name": "tags", "in": "query", "required": True,
+         "schema": {"type": "array", "items": {"type": "string", "enum": ["t1", "t2"]}}},
+        {"name": "ids", "in": "query", "required": True, "schema": {"type": "array", "example": 3}},
+    ]) == {"unit": "c", "tags": ["t1"], "ids": [3]}
 
 
 def test_code_files_emits_models_and_client_per_endpoint() -> None:

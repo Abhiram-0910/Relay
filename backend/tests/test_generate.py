@@ -1,10 +1,18 @@
+import inspect
+import json
 import re
+import typing
 from pathlib import Path
 
 import pytest
 import requests
 
 from app.generate import generate_all_endpoints, generate_endpoint_client
+from tests.generated_client import BASE_URL, capture, load_client
+
+
+def _method(result: dict, tmp_path: Path):
+    return getattr(load_client(result, tmp_path / "sig"), result["method_name"])
 
 PET_SCHEMA = {
     "type": "object",
@@ -73,8 +81,12 @@ def test_path_param_endpoint_compiles(tmp_path: Path) -> None:
     compile(result["client_code"], "client.py", "exec")
 
     assert "class GetPetByIdResponse(BaseModel)" in result["models_code"]
-    assert "def getPetById(self, petId: int) -> GetPetByIdResponse" in result["client_code"]
-    assert 'f"{self.base_url}/pet/{petId}"' in result["client_code"]
+    method = _method(result, tmp_path)
+    [(name, param)] = inspect.signature(method).parameters.items()
+    assert (name, param.kind, param.default) == ("petId", param.POSITIONAL_OR_KEYWORD, param.empty)
+    hints = typing.get_type_hints(method)
+    assert hints["petId"] is int and hints["return"].__name__ == "GetPetByIdResponse"
+    assert capture(result, tmp_path, 7).url == f"{BASE_URL}/pet/7"
 
 
 def test_query_param_endpoint_compiles(tmp_path: Path) -> None:
@@ -83,9 +95,11 @@ def test_query_param_endpoint_compiles(tmp_path: Path) -> None:
     compile(result["models_code"], "models.py", "exec")
     compile(result["client_code"], "client.py", "exec")
 
-    assert "status: str | None = None" in result["client_code"]
-    # the wire-visible key is now repr()'d (single-quoted), not raw-spliced double-quoted text
-    assert "params={k: v for k, v in {'status': status}.items() if v is not None}" in result["client_code"]
+    param = inspect.signature(_method(result, tmp_path)).parameters["status"]
+    assert (param.kind, param.default) == (param.KEYWORD_ONLY, None)
+    assert typing.get_type_hints(_method(result, tmp_path))["status"] == str | None
+    assert capture(result, tmp_path, status="available").url == f"{BASE_URL}/pet/findByStatus?status=available"
+    assert capture(result, tmp_path).url == f"{BASE_URL}/pet/findByStatus"  # None is omitted
 
 
 def test_request_body_endpoint_compiles(tmp_path: Path) -> None:
@@ -95,8 +109,14 @@ def test_request_body_endpoint_compiles(tmp_path: Path) -> None:
     compile(result["client_code"], "client.py", "exec")
 
     assert "class AddPetRequest(BaseModel)" in result["models_code"]
-    assert "def addPet(self, body: AddPetRequest) -> AddPetResponse" in result["client_code"]
-    assert "json=body.model_dump(mode='json', exclude_none=True)" in result["client_code"]
+    method = _method(result, tmp_path)
+    [(name, param)] = inspect.signature(method).parameters.items()
+    assert (name, param.kind, param.default) == ("body", param.POSITIONAL_OR_KEYWORD, param.empty)
+    hints = typing.get_type_hints(method)
+    assert (hints["body"].__name__, hints["return"].__name__) == ("AddPetRequest", "AddPetResponse")
+    body_model = typing.get_type_hints(load_client(result, tmp_path / "body").addPet)["body"]
+    sent = capture(result, tmp_path, body_model(id=1, name="rex"))
+    assert (sent.method, sent.url, json.loads(sent.body)) == ("POST", f"{BASE_URL}/pet", {"id": 1, "name": "rex"})
 
 
 # --- Step 6 (security review, F5): spec-supplied identifiers must never become live code --------
@@ -167,11 +187,12 @@ def test_malicious_query_param_name_cannot_break_out_of_the_dict_literal(tmp_pat
 
 
 def test_declared_path_param_still_substitutes_correctly(tmp_path: Path) -> None:
-    """The legitimate case must keep working exactly as before: a real path parameter is still a
-    live f-string substitution using the caller-supplied argument."""
+    """The legitimate case must keep working: a real path parameter is still a live substitution of
+    the caller-supplied argument (percent-encoded since 4d, so it can't change the path)."""
     result = generate_endpoint_client(SPEC, "/pet/{petId}", "get", tmp_path)
     compile(result["client_code"], "client.py", "exec")
-    assert 'f"{self.base_url}/pet/{petId}"' in result["client_code"]
+    assert 'f"{self.base_url}/pet/{_relay_path_value(petId)}"' in result["client_code"]
+    assert capture(result, tmp_path, "a/b c").url == f"{BASE_URL}/pet/a%2Fb%20c"
 
 
 def test_generate_endpoint_client_raises_without_json_response(tmp_path: Path) -> None:

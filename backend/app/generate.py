@@ -3,8 +3,8 @@
 No LLM involvement here — types come from datamodel-code-generator, client
 methods from a Jinja2 template. Each endpoint with a JSON response schema gets
 its own standalone models.py + client.py pair; endpoints without a JSON
-response are skipped (reported, not generated). Path params, query params,
-and JSON request bodies are supported; other content types are not.
+response are skipped (reported, not generated). Path, query and header params (planned by
+app.params) and JSON request bodies are supported; other content types are not.
 """
 import json
 import re
@@ -16,9 +16,9 @@ from datamodel_code_generator import DataModelType, InputFileType
 from datamodel_code_generator import generate as generate_models
 
 from app.naming import _IDENT_RE, _safe_identifier, _to_pascal_case  # noqa: F401 (re-exported)
+from app.params import SERIALISER_SOURCE, plan_parameters, render_signature, render_wire_args
 
 HTTP_METHODS = {"get", "post", "put", "patch", "delete", "options", "head"}
-JSON_TYPE_TO_PY = {"integer": "int", "string": "str", "number": "float", "boolean": "bool"}
 
 
 class UnsupportedOperation(ValueError):
@@ -73,14 +73,15 @@ def _safe_path_fstring(path: str, path_param_locals: dict[str, str]) -> str:
     an attacker's spec can put an arbitrary Python expression in a path segment (e.g.
     `/x{__import__('os').system(...)}`) and have it evaluated every time the generated method
     runs. Only a `{name}` matching a DECLARED path parameter becomes a live substitution, and
-    always via that parameter's already-validated local identifier — never the raw spec text, even
-    when the declared name happens to itself be a valid identifier. Everything else (undeclared
-    brace groups, stray braces, quotes, backslashes, control characters) is an escaped literal."""
+    always as `_relay_path_value(<local>)` on that parameter's already-validated local identifier
+    (percent-encoded on the wire) — never the raw spec text, even when the declared name happens to
+    itself be a valid identifier. Everything else (undeclared brace groups, stray braces, quotes,
+    backslashes, control characters) is an escaped literal."""
     out, pos = [], 0
     for m in _BRACE_GROUP_RE.finditer(path):
         local = path_param_locals.get(m.group(1))
         if local:
-            out.append(_fstring_literal(path[pos:m.start()]) + "{" + local + "}")
+            out.append(_fstring_literal(path[pos:m.start()]) + "{_relay_path_value(" + local + ")}")
             pos = m.end()
     out.append(_fstring_literal(path[pos:]))
     return "".join(out)
@@ -90,9 +91,11 @@ CLIENT_TEMPLATE = jinja2.Template(
 from __future__ import annotations
 
 import requests
-
+{{ typing_import_line }}
 from .models import {{ model_imports }}
 
+{{ serialiser }}
+{{ alias_lines }}
 
 class {{ class_name }}:
     def __init__(self, base_url: str) -> None:
@@ -102,16 +105,13 @@ class {{ class_name }}:
         response = requests.{{ http_method }}(
             f"{self.base_url}{{ path_fstring }}",
             {{ params_kwarg_line }}
+            {{ headers_kwarg_line }}
             {{ json_kwarg_line }}
         )
         response.raise_for_status()
         return {{ response_model }}.model_validate(response.json())
 '''
 )
-
-
-def _py_type(schema: dict) -> str:
-    return JSON_TYPE_TO_PY.get(schema.get("type"), "str")
 
 
 def _response_schema(operation: dict) -> dict | None:
@@ -127,10 +127,6 @@ def _request_body_schema(operation: dict) -> dict | None:
     return operation.get("requestBody", {}).get("content", {}).get("application/json", {}).get("schema")
 
 
-def _params_by_location(operation: dict, location: str) -> list[dict]:
-    return [p for p in operation.get("parameters", []) if p.get("in") == location]
-
-
 def _generate_model(schema: dict, class_name: str, tmp_dir: Path, filename: str) -> str:
     out = tmp_dir / filename
     generate_models(
@@ -139,6 +135,7 @@ def _generate_model(schema: dict, class_name: str, tmp_dir: Path, filename: str)
         output=out,
         output_model_type=DataModelType.PydanticV2BaseModel,
         class_name=class_name,
+        disable_timestamp=True,  # byte-reproducible output (receipts hash it)
     )
     return out.read_text()
 
@@ -179,8 +176,6 @@ def generate_endpoint_client(spec: dict, path: str, method: str, tmp_dir: Path) 
     response_model = f"{prefix}Response"
     models_code = _generate_model(response_schema, response_model, tmp_dir, "response_models.py")
 
-    path_params = _params_by_location(operation, "path")
-    query_params = _params_by_location(operation, "query")
     request_schema = _request_body_schema(operation)
     body_required = operation.get("requestBody", {}).get("required", False)
 
@@ -190,34 +185,24 @@ def generate_endpoint_client(spec: dict, path: str, method: str, tmp_dir: Path) 
         request_models_code = _generate_model(request_schema, request_model, tmp_dir, "request_models.py")
         models_code = _merge_python_modules([models_code, request_models_code])
 
-    # SECURITY: every parameter name is spec-supplied and about to become a Python identifier in
-    # generated source — validate each one (falling back to a deterministic safe name) rather than
-    # trusting spec text as code. local_name may differ from the real (wire) name.
-    local_name = {
-        p["name"]: _safe_identifier(p["name"], f"param_{i}")
-        for i, p in enumerate(path_params + query_params)
-    }
+    # SECURITY: parameter names, types and enum members are spec text; app.params turns them into
+    # sanitised identifiers, repr()'d literals and fixed type names before any reach the template.
+    op_params = plan_parameters(
+        spec["paths"][path], operation, alias_prefix=prefix, sanitise=_safe_identifier,
+        reserved={response_model, request_model} - {None},
+    )
+    if op_params.skip_reason:
+        raise UnsupportedOperation(f"{method.upper()} {path} skipped: {op_params.skip_reason}")
 
-    # ponytail: required-before-optional param ordering, no dedup of shared nested schema
-    # names across endpoints — good enough for compile-checked standalone files, revisit if
-    # these ever get merged into one shared client module.
-    sig_parts = [f", {local_name[p['name']]}: {_py_type(p.get('schema', {}))}" for p in path_params]
-    if request_model and body_required:
-        sig_parts.append(f", body: {request_model}")
-    sig_parts += [f", {local_name[p['name']]}: {_py_type(p.get('schema', {}))} | None = None" for p in query_params]
-    if request_model and not body_required:
-        sig_parts.append(f", body: {request_model} | None = None")
-    params_sig = "".join(sig_parts)
-
-    params_kwarg_line = ""
-    if query_params:
-        # The wire-visible query key is the real (possibly non-identifier) spec name, rendered via
-        # repr() so it's always a correctly quote-escaped Python string literal, never raw-spliced
-        # text; the value referenced is the validated local identifier.
-        items = ", ".join(f"{p['name']!r}: {local_name[p['name']]}" for p in query_params)
-        params_kwarg_line = "params={k: v for k, v in {" + items + "}.items() if v is not None},"
-
+    params_sig = render_signature(op_params, (request_model, body_required) if request_model else None)
+    query_items, header_items = render_wire_args(op_params)
+    has = {loc: any(p.location == loc for p in op_params.params) for loc in ("query", "header")}
+    params_kwarg_line = f"params=_relay_query_string({query_items})," if has["query"] else ""
+    headers_kwarg_line = f"headers=_relay_header_dict({header_items})," if has["header"] else ""
     json_kwarg_line = f"json=body.model_dump(mode='json', exclude_none=True)," if request_model else ""
+    typing_import_line = (f"from typing import {', '.join(sorted(op_params.typing_imports))}\n"
+                          if op_params.typing_imports else "")
+    alias_lines = "".join(f"{name} = {literal}\n" for name, literal in op_params.aliases.items())
 
     method_name = _safe_identifier(
         operation.get("operationId") or "",
@@ -225,7 +210,7 @@ def generate_endpoint_client(spec: dict, path: str, method: str, tmp_dir: Path) 
     )
     class_name = _safe_class_name(spec.get("info", {}).get("title", "Api"), "Api") + "Client"
     model_imports = response_model + (f", {request_model}" if request_model else "")
-    path_param_locals = {p["name"]: local_name[p["name"]] for p in path_params}
+    path_param_locals = {p.wire_name: p.local_name for p in op_params.params if p.location == "path"}
 
     client_code = CLIENT_TEMPLATE.render(
         title=_safe_docstring_text(spec.get("info", {}).get("title", "")),
@@ -237,10 +222,14 @@ def generate_endpoint_client(spec: dict, path: str, method: str, tmp_dir: Path) 
         http_method=method,
         path_fstring=_safe_path_fstring(path, path_param_locals),
         params_kwarg_line=params_kwarg_line,
+        headers_kwarg_line=headers_kwarg_line,
         json_kwarg_line=json_kwarg_line,
+        typing_import_line=typing_import_line,
+        serialiser=SERIALISER_SOURCE,
+        alias_lines=alias_lines,
     )
-    # Output that doesn't compile (e.g. a param named `self`, or path+query sharing a name) is
-    # skipped here, not shipped: SyntaxError reaches generate_all_endpoints' generator_error skip.
+    # Output that doesn't compile is skipped here, not shipped: SyntaxError reaches
+    # generate_all_endpoints' generator_error skip.
     compile(models_code, "models.py", "exec")
     compile(client_code, "client.py", "exec")
 
@@ -251,6 +240,9 @@ def generate_endpoint_client(spec: dict, path: str, method: str, tmp_dir: Path) 
         "method_name": method_name,
         "models_code": models_code,
         "client_code": client_code,
+        "params": op_params.to_jsonable(),
+        "lossy": op_params.lossy,
+        "ignored": op_params.ignored,
     }
 
 

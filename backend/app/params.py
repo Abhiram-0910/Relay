@@ -205,7 +205,7 @@ def _has_object(schema, depth: int = 0) -> bool:
 
 # --- planning ------------------------------------------------------------------------------------
 
-def _merged(path_item: dict, operation: dict) -> list[dict]:
+def merged_parameters(path_item: dict, operation: dict) -> list[dict]:
     """Path-item-level parameters, overridden by operation-level ones with the same (name, in)."""
     merged: dict = {}
     for p in [*(path_item.get("parameters") or []), *(operation.get("parameters") or [])]:
@@ -242,7 +242,7 @@ def plan_parameters(path_item: dict, operation: dict, *, alias_prefix: str,
     template uses that only it knows (the operation's model class names)."""
     out = OperationParams()
     candidates = []
-    for p in _merged(path_item, operation):
+    for p in merged_parameters(path_item, operation):
         if not isinstance(p, dict) or "$ref" in p:
             out.skip_reason = SKIP_UNRESOLVED_REF
             return out

@@ -39,6 +39,7 @@ from urllib.parse import urljoin
 from app.byok import ByokFetchError, ByokKeyMissingError, run_with_optional_byok
 from app.correct import self_correct
 from app.generate import generate_all_endpoints
+from app.params import merged_parameters
 from app.sandbox import STATUS_PASS, SandboxError, SSRFError, resolve_and_validate_host, run_in_sandbox
 
 # SECURITY (Step 6, F2): resolve_and_validate_host only checks the URL it's given. `requests.get`
@@ -212,23 +213,42 @@ def _resolve_base_url(spec: dict, path: str) -> str | None:
     return demo["base_url"] if demo else None
 
 
-def _required_kwargs(spec: dict, path: str, method: str) -> dict | None:
-    """Build kwargs for the REQUIRED params from spec example/default (or the demo hook). Returns
-    None if any required param can't be filled — that endpoint is reported generated-only, not
-    live-called. Optional params are omitted to keep the call minimal and predictable."""
-    operation = spec["paths"][path][method.lower()]
+def _example_value(param: dict, schema: dict):
+    """A value for one parameter from the spec: example, then default, then (if neither) the first
+    non-null enum member. An array gets a list: its own example/default, else one synthesised item."""
+    value = param.get("example", schema.get("example", schema.get("default")))
+    if value is None:
+        members = [m for m in schema.get("enum") or [] if m is not None]
+        value = members[0] if members else None
+    types = schema.get("type") if isinstance(schema.get("type"), list) else [schema.get("type")]
+    if "array" in types:
+        if value is None:
+            item = _example_value({}, schema.get("items") or {})
+            return None if item is None else [item]
+        return value if isinstance(value, list) else [value]
+    return value
+
+
+def _required_kwargs(spec: dict, path: str, method: str, params: list[dict]) -> dict | None:
+    """Build kwargs for the REQUIRED params in the generator's parameter table (`params`, from
+    app.params' to_jsonable()), keyed by the generated method's local names. Values come from the
+    spec's example/default/enum (or the demo hook, by wire name). Returns None if any required param
+    can't be filled — that endpoint is reported generated-only, not live-called. Optional params are
+    omitted to keep the call minimal and predictable."""
+    path_item = spec["paths"][path]
+    raw = {(p.get("name"), p.get("in")): p for p in merged_parameters(path_item, path_item[method.lower()])}
     demo_params = _DEMO_TARGETS.get(path, {}).get("params", {})
     kwargs: dict = {}
-    for param in operation.get("parameters", []):
-        if not param.get("required"):
+    for entry in params:
+        if not entry["required"]:
             continue
-        schema = param.get("schema", {})
-        value = param.get("example", schema.get("example", schema.get("default")))
+        param = raw[(entry["wire_name"], entry["location"])]
+        value = _example_value(param, param.get("schema", {}))
         if value is None:
-            value = demo_params.get(param["name"])
+            value = demo_params.get(entry["wire_name"])
         if value is None:
             return None
-        kwargs[param["name"]] = value
+        kwargs[entry["local_name"]] = value
     return kwargs
 
 
@@ -249,7 +269,7 @@ def _live_validate(spec: dict, generated: list[dict], api_key: str | None = None
                              "reason": "non-GET; not called live"})
             continue
         base_url = _resolve_base_url(spec, endpoint["path"])
-        kwargs = _required_kwargs(spec, endpoint["path"], endpoint["method"])
+        kwargs = _required_kwargs(spec, endpoint["path"], endpoint["method"], item["params"])
         if base_url is None or kwargs is None:
             verdicts.append({"endpoint": endpoint, "status": "generated_only",
                              "reason": "no base_url or required-param values available"})
@@ -366,6 +386,10 @@ def run(spec_url: str, reporter: Reporter | None = None) -> dict:
             "title": title,
             "endpoint_count": len(items),
             "generated": [g["endpoint"] for g in generated],
+            # The parameter table per generated operation: what the method takes, how each name and
+            # type was derived, and what was weakened (lossy) or left out (ignored).
+            "parameters": [{"endpoint": g["endpoint"], "params": g["params"], "lossy": g["lossy"],
+                            "ignored": g["ignored"]} for g in generated],
             "skipped": skipped,
             "validated": verdicts,
         }

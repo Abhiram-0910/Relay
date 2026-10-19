@@ -6,6 +6,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 
@@ -24,19 +25,37 @@ def _one_op_spec(*, title="T", operation_id="getX", params=(), openapi="3.0.3") 
 
 # --- step 3: one failing operation is skipped, not fatal ----------------------------------------
 
-def test_openapi_31_type_list_param_is_skipped_not_fatal(tmp_path: Path) -> None:
-    """`type: ["integer", "null"]` crashes _py_type with a TypeError. That operation must be skipped
-    with a generator_error reason while the rest still generate. (Piece 4c makes it generate.)"""
-    spec = _one_op_spec(openapi="3.1.0", params=[
-        {"name": "n", "in": "query", "schema": {"type": ["integer", "null"]}}])
+def test_a_failing_operation_is_skipped_not_fatal(monkeypatch, tmp_path: Path) -> None:
+    """Any exception while generating one operation skips it with a generator_error reason carrying
+    only the exception type, while the rest still generate."""
+    from app import generate
+
+    real_plan = generate.plan_parameters
+
+    def plan(path_item, operation, **kwargs):
+        if operation.get("operationId") == "getX":
+            raise TypeError("spec text that must not reach the reason")
+        return real_plan(path_item, operation, **kwargs)
+
+    monkeypatch.setattr(generate, "plan_parameters", plan)
+    spec = _one_op_spec()
     spec["paths"]["/y"] = {"get": {"operationId": "getY", "responses": _OK}}
 
-    items = list(generate_all_endpoints(spec, tmp_path))
-
-    by_path = {i["endpoint"]["path"]: i for i in items}
+    by_path = {i["endpoint"]["path"]: i for i in generate_all_endpoints(spec, tmp_path)}
     assert by_path["/x"]["status"] == "skipped"
     assert by_path["/x"]["reason"] == "generator_error: TypeError"
     assert by_path["/y"]["status"] == "generated"
+
+
+def test_openapi_31_type_list_param_generates(tmp_path: Path) -> None:
+    """`type: ["integer", "null"]` used to crash the old _py_type (4b skipped it); since 4d it is
+    planned by app.params as `int | None`."""
+    spec = _one_op_spec(openapi="3.1.0", params=[
+        {"name": "n", "in": "query", "schema": {"type": ["integer", "null"]}}])
+    [item] = generate_all_endpoints(spec, tmp_path)
+    assert item["status"] == "generated"
+    assert item["params"] == [{"wire_name": "n", "local_name": "n", "location": "query", "required": False,
+                               "py_type": "int | None", "lossy": []}]
 
 
 def test_generator_error_reaches_the_report_and_the_ci_log(monkeypatch, capsys) -> None:
@@ -152,21 +171,24 @@ def _hostile_spec(p: str) -> dict:
     }}
 
 
-# Imports the generated client (exit code 1 if that fails), then calls the method with requests
-# stubbed out, so a payload that only runs when the URL/arguments are built is observed too. A call
-# that errors for an ordinary reason is reported on stdout, not as a failed exit.
+# Imports the generated client (exit code 1 if that fails), then calls the method with every
+# parameter set ("v", or a stub model for `body`) and Session.send stubbed out, so a payload that
+# only runs when the URL/arguments are built is observed too, and the prepared URL can be checked.
+# A call that errors for an ordinary reason is reported on stdout, not as a failed exit.
 _RUN_GENERATED = r'''
 import importlib, inspect, sys
 sys.path.insert(0, sys.argv[1])
 mod = importlib.import_module("client_pkg.client")
 import requests
 class _Stop(Exception): pass
-def _stub(*a, **k): raise _Stop
-for m in ("get", "post", "put", "patch", "delete", "options", "head"): setattr(requests, m, _stub)
+def _send(self, request, **k):
+    print("URL: " + request.url)
+    raise _Stop
+requests.sessions.Session.send = _send
 class _Arg:
     def model_dump(self, **k): return {}
 meth = getattr(getattr(mod, sys.argv[2])("https://example.invalid"), sys.argv[3])
-kwargs = {n: _Arg() for n, p in inspect.signature(meth).parameters.items() if p.default is p.empty}
+kwargs = {n: (_Arg() if n == "body" else "v") for n in inspect.signature(meth).parameters}
 try:
     meth(**kwargs)
 except _Stop:
@@ -205,5 +227,9 @@ def test_hostile_spec_never_executes_spec_text(payload: str, tmp_path: Path) -> 
         )
         assert proc.returncode == 0, proc.stderr[-500:]
         assert not canary.exists(), "spec text executed"
-        outcomes.append(f"{op}: generated, imported, {proc.stdout.strip()}")
+        assert "CALL: reached requests" in proc.stdout, proc.stdout
+        url = proc.stdout.split("URL: ", 1)[1].split("\n", 1)[0]
+        if op == "GET /a":  # the query parameter carries the payload as its wire name, unchanged
+            assert f"?{quote(payload, safe='')}=v" in url, url
+        outcomes.append(f"{op}: generated, imported, call reached requests: {url}")
     print(json.dumps({"payload": payload, "outcomes": outcomes}, ensure_ascii=True))
