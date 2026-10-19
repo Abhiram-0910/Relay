@@ -27,10 +27,15 @@ describe("status → tone SSOT", () => {
   it("red/danger covers sandbox_timeout and every corrector-level code (Step 3)", () => {
     for (const s of ["sandbox_timeout", "corrector_auth_failed", "corrector_config_error",
                      "quota_exhausted_shared", "quota_exhausted_byok", "corrector_network_error",
-                     "corrector_bad_response", "corrector_error"]) {
+                     "corrector_bad_response", "corrector_error", "model_unsupported"]) {
       expect(toneOf(s)).toBe("danger");
       expect(labelOf(s)).not.toBe(s); // a real short label, not a fallback to the raw code
     }
+  });
+
+  it("model_unsupported is danger with its own label", () => {
+    expect(toneOf("model_unsupported")).toBe("danger");
+    expect(labelOf("model_unsupported")).toBe("Model unsupported");
   });
 
   it("red/danger covers every pipeline-level code (Step 3/5) with a real short label", () => {

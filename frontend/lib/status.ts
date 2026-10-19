@@ -7,7 +7,7 @@
 //   emerald (success)  -> verified_pass ONLY (and run-level "succeeded", i.e. all live-called passed)
 //   amber   (warn)     -> generated_only, verified_live_validation_failed, and in-progress states
 //   red     (danger)   -> call_failed, sandbox_timeout, failed, ssrf_blocked, rate_limited, error,
-//                         and the 7 corrector-level codes (Step 3) — all failure modes
+//                         and the 8 corrector-level codes (Step 3) — all failure modes
 //   slate   (neutral)  -> anything unknown
 
 export type Tone = "success" | "warn" | "danger" | "neutral";
@@ -38,6 +38,7 @@ const TONE_BY_STATUS: Record<string, Tone> = {
   corrector_network_error: "danger",
   corrector_bad_response: "danger",
   corrector_error: "danger",
+  model_unsupported: "danger",
   // danger — pipeline-level codes (Step 3, ci_runner.py's _classify_pipeline_error). Only ever
   // appear as run.error. Step 5: giving the run-failed banner a StatusBadge surfaced that these had
   // never been mapped — errors.ts had full-sentence messages for them, but no short label/tone.
@@ -106,6 +107,7 @@ const LABELS: Record<string, string> = {
   corrector_network_error: "Network error",
   corrector_bad_response: "Bad response",
   corrector_error: "Auto-fix failed",
+  model_unsupported: "Model unsupported",
   spec_fetch_failed: "Fetch failed",
   spec_invalid: "Invalid spec",
   ssrf_blocked_spec: "Blocked (SSRF)",

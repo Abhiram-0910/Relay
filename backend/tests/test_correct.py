@@ -207,6 +207,8 @@ def test_classify_corrector_exception_shared_vs_byok() -> None:
     assert classify(correct.CorrectorAuthError("x"), byok=True) == "corrector_auth_failed"
     assert classify(correct.CorrectorNetworkError("x"), byok=True) == "corrector_network_error"
     assert classify(correct.CorrectorBadResponseError("x"), byok=True) == "corrector_bad_response"
+    assert classify(correct.CorrectorModelError("x"), byok=True) == "model_unsupported"
+    assert classify(correct.CorrectorModelError("x"), byok=False) == "model_unsupported"
     assert classify(RuntimeError("unrecognized"), byok=True) == "corrector_error"  # safe fallback
 
 
@@ -362,6 +364,84 @@ def test_openai_compatible_other_http_errors_stay_unclassified() -> None:
     with mock_patch("app.correct.requests.post", return_value=_fake_http_error_response(500)):
         with pytest.raises(requests.HTTPError):
             corrector("gpt-5", {}, _report(sandbox.STATUS_CALL_FAILED), "# m\n", "# c\n", api_key="sk-user")
+
+
+_REJECTIONS = json.loads(
+    (Path(__file__).resolve().parents[2] / "worker" / "test" / "fixtures" / "openai-rejections.json")
+    .read_text())
+
+
+def _fake_http_error_body(status_code: int, error: dict):
+    resp = _fake_http_error_response(status_code)
+    resp.json.return_value = {"error": error}
+    return resp
+
+
+@pytest.mark.parametrize("rec", _REJECTIONS, ids=[r["id"] for r in _REJECTIONS])
+def test_openai_compatible_real_rejections_are_model_unsupported(rec) -> None:
+    """Every real 404/403 body from the probe (deprecated, v1/responses-only, no sampling access)
+    means "pick another model" — not a rejected key, not an unclassified error."""
+    from unittest.mock import patch as mock_patch
+
+    body = {"code": rec["code"], "type": rec["type"], "message": rec["message"], "param": None}
+    corrector = correct.openai_compatible_corrector("https://api.openai.com/v1")
+    with mock_patch("app.correct.requests.post",
+                    return_value=_fake_http_error_body(rec["status"], body)):
+        with pytest.raises(correct.CorrectorModelError):
+            corrector(rec["id"], {}, _report(sandbox.STATUS_CALL_FAILED), "# m\n", "# c\n",
+                      api_key="sk-user")
+
+
+def test_openai_compatible_rejected_json_schema_is_model_unsupported() -> None:
+    """SYNTHETIC body: the probe never got past billing_not_active, so no real 400 for a rejected
+    response_format exists in our evidence. Shape follows OpenAI's documented error format."""
+    from unittest.mock import patch as mock_patch
+
+    synthetic = {"code": None, "type": "invalid_request_error", "param": "response_format",
+                 "message": "Invalid parameter: 'response_format' of type 'json_schema' is not "
+                            "supported with this model."}
+    corrector = correct.openai_compatible_corrector("https://api.openai.com/v1")
+    with mock_patch("app.correct.requests.post", return_value=_fake_http_error_body(400, synthetic)):
+        with pytest.raises(correct.CorrectorModelError):
+            corrector("gpt-x", {}, _report(sandbox.STATUS_CALL_FAILED), "# m\n", "# c\n",
+                      api_key="sk-user")
+
+
+@pytest.mark.parametrize("status_code,error,expected", [
+    (401, {"code": "invalid_api_key", "message": "Incorrect API key provided: sk-***."},
+     correct.CorrectorAuthError),
+    (403, {"code": None, "message": "Your organization is not allowed in this region."},
+     correct.CorrectorAuthError),
+    (404, {"code": None, "message": "Not found."}, requests.HTTPError),
+    (400, {"code": None, "param": "messages", "message": "Invalid 'messages'."}, requests.HTTPError),
+])
+def test_openai_compatible_other_error_bodies_keep_their_buckets(status_code, error, expected) -> None:
+    from unittest.mock import patch as mock_patch
+
+    corrector = correct.openai_compatible_corrector("https://api.openai.com/v1")
+    with mock_patch("app.correct.requests.post",
+                    return_value=_fake_http_error_body(status_code, error)):
+        with pytest.raises(expected):
+            corrector("gpt-5", {}, _report(sandbox.STATUS_CALL_FAILED), "# m\n", "# c\n",
+                      api_key="sk-user")
+
+
+def test_model_unsupported_stops_the_ladder_and_is_recorded(tmp_path: Path) -> None:
+    pkg = _make_pkg(tmp_path)
+
+    def unsupported(model_id, call_spec, report, models_code, client_code, **kwargs):
+        raise correct.CorrectorModelError("404 model_not_found")
+
+    def unused_sandbox(pkg_dir, call_spec):
+        raise AssertionError("sandbox should not run after a corrector error")
+
+    result = self_correct(
+        pkg, {"base_url": OPEN_METEO_BASE_URL}, _report(sandbox.STATUS_CALL_FAILED),
+        run_sandbox=unused_sandbox, corrector=unsupported, api_key="sk-user",
+    )
+    assert not result.succeeded
+    assert len(result.attempts) == 1
+    assert result.attempts[0].status_after == "model_unsupported"
 
 
 def test_openai_compatible_classifies_network_error() -> None:

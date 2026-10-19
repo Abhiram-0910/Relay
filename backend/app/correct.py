@@ -44,7 +44,7 @@ Corrector = Callable[[str, dict, dict, str, str], Patch]
 
 
 # Step 3 (honest error taxonomy): each adapter classifies ITS OWN provider-specific exceptions into
-# one of these four, so self_correct's loop stays provider-agnostic — it only ever isinstance-checks
+# one of these markers, so self_correct's loop stays provider-agnostic — it only ever isinstance-checks
 # against this shared, small vocabulary, never against requests/httpx/genai exception types directly.
 # Anything an adapter doesn't recognize is left unclassified (falls through to plain Exception),
 # which is the honest, safe default — never guess a bucket.
@@ -66,6 +66,11 @@ class CorrectorBadResponseError(Exception):
     2xx status."""
 
 
+class CorrectorModelError(Exception):
+    """The chosen model can't serve this request: not on this endpoint, deprecated, not accessible
+    to this key, or it rejects the structured-output format. A different model is the only fix."""
+
+
 def _classify_corrector_exception(exc: Exception, *, byok: bool) -> str:
     """Map a corrector exception to a status code, using `byok` only where the message/fix genuinely
     differs (quota and auth) — see ARCHITECTURE.md Step 3. Unclassified exceptions (an adapter didn't
@@ -80,6 +85,8 @@ def _classify_corrector_exception(exc: Exception, *, byok: bool) -> str:
         return "corrector_network_error"
     if isinstance(exc, CorrectorBadResponseError):
         return "corrector_bad_response"
+    if isinstance(exc, CorrectorModelError):
+        return "model_unsupported"
     return "corrector_error"
 
 
@@ -248,6 +255,29 @@ def _openai_chat_payload(model: str, system: str, user: str, schema: dict, *,
     return payload
 
 
+def _openai_model_unsupported(resp) -> bool:
+    """True when an OpenAI-family error body says this model can't serve this request. The 404 and
+    403 rules match real bodies (worker/test/fixtures/openai-rejections.json); anything else stays
+    with the status-code classification below."""
+    try:
+        err = resp.json().get("error")
+    except (ValueError, AttributeError):
+        return False
+    if not isinstance(err, dict):
+        return False
+    msg = str(err.get("message") or "")
+    if resp.status_code == 404:  # "has been deprecated" / "not supported in the v1/chat/completions"
+        return err.get("code") == "model_not_found" or "v1/chat/completions" in msg
+    if resp.status_code == 403:  # model access, not a rejected key
+        return "not allowed to sample from this model" in msg
+    if resp.status_code == 400:
+        # ponytail: NOT grounded in a captured body (the probe hit billing_not_active first) —
+        # matches OpenAI's documented shape for an unsupported structured output. Re-check on a
+        # funded probe.
+        return err.get("param") == "response_format" or "json_schema" in msg
+    return False
+
+
 def openai_compatible_corrector(base_url: str) -> Corrector:
     """Factory: a corrector speaking the OpenAI Chat Completions protocol at `base_url`. One
     implementation serves OpenAI, Grok (xAI), and OpenRouter — identical wire protocol, differing
@@ -273,6 +303,8 @@ def openai_compatible_corrector(base_url: str) -> Corrector:
             resp.raise_for_status()
         except requests.HTTPError as exc:
             status = exc.response.status_code if exc.response is not None else None
+            if exc.response is not None and _openai_model_unsupported(exc.response):
+                raise CorrectorModelError(str(exc)) from exc
             if status in (401, 403):
                 raise CorrectorAuthError(str(exc)) from exc
             if status == 429:

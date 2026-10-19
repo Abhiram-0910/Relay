@@ -20,6 +20,12 @@ describe("errorMessage — code → plain language, never raw", () => {
     expect(errorMessage("byok_fetch_failed")).toMatch(/couldn't be passed/i);
   });
 
+  it("maps model_unsupported to its own pick-another-model message", () => {
+    expect(errorMessage("model_unsupported")).toBe(
+      "That model can't be used for auto-fix: it doesn't support this request format, or your key can't access it. Pick a different model.",
+    );
+  });
+
   it("falls back to a generic message for an unrecognized code, never blank/raw", () => {
     expect(errorMessage("some_future_code_nobody_mapped_yet").length).toBeGreaterThan(0);
     expect(errorMessage("some_future_code_nobody_mapped_yet")).not.toContain("some_future_code");
@@ -44,6 +50,7 @@ describe("suggestsByok — only where switching key source genuinely helps", () 
     expect(suggestsByok("spec_invalid")).toBe(false);
     expect(suggestsByok("byok_key_missing")).toBe(false);
     expect(suggestsByok("byok_fetch_failed")).toBe(false);
+    expect(suggestsByok("model_unsupported")).toBe(false);
     expect(suggestsByok(null)).toBe(false);
   });
 });

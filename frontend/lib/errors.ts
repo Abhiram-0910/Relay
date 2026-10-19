@@ -8,7 +8,7 @@
 //     byok_key_missing, byok_fetch_failed (a BYOK run fails closed rather than use the shared key).
 //   - Corrector-level codes (backend/app/correct.py's _classify_corrector_exception):
 //     corrector_auth_failed, corrector_config_error, quota_exhausted_shared/byok,
-//     corrector_network_error, corrector_bad_response, corrector_error.
+//     corrector_network_error, corrector_bad_response, corrector_error, model_unsupported.
 //
 // Never render a raw code, a raw exception string, or an HTTP status number to the end user —
 // everything that shows an error MUST go through here, same discipline as status.ts.
@@ -52,6 +52,8 @@ const ERROR_MESSAGES: Record<string, string> = {
   corrector_network_error: "Couldn't reach the provider to auto-fix the client.",
   corrector_bad_response: "Auto-fix didn't return a usable result — try again.",
   corrector_error: "Auto-fix didn't succeed this time.",
+  model_unsupported:
+    "That model can't be used for auto-fix: it doesn't support this request format, or your key can't access it. Pick a different model.",
 };
 
 // Codes where switching to (or already using) BYOK is a genuine way around the problem — a shared
@@ -66,7 +68,7 @@ const ERROR_MESSAGES: Record<string, string> = {
 //   - rate_limited        -> app/page.tsx, the rate-limit banner (RateLimitInfo.error)
 //   - quota_exhausted_shared,
 //     corrector_config_error -> components/ValidationReport.tsx, EndpointRow's terminal attempt
-//                                (attempt.status_after — the only two of the 7 corrector codes a
+//                                (attempt.status_after — the only two of the 8 corrector codes a
 //                                BYOK hint applies to)
 const BYOK_SUGGESTING_CODES = new Set(["rate_limited", "quota_exhausted_shared", "corrector_config_error"]);
 
