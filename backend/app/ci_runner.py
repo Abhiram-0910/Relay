@@ -41,6 +41,7 @@ from app.byok import ByokFetchError, ByokKeyMissingError, run_with_optional_byok
 from app.correct import self_correct
 from app.generate import generate_all_endpoints
 from app.params import merged_parameters
+from app.servers import resolve_base_url
 from app.sandbox import STATUS_PASS, SandboxError, SSRFError, resolve_and_validate_host, run_in_sandbox
 from app.spec_version import (UNRECOGNISED, SpecVersionInvalid, UnsupportedSpecVersion, check_spec_version,
                               spec_version_label)
@@ -138,12 +139,12 @@ def guarded_prance_resolve():
     finally:
         _prance_url.fetch_url_text = original
 
-# Demo hook: for spec targets whose required params have no example/default and whose spec omits
-# `servers`, supply a known-good base_url + params so the proven Open-Meteo flow works end to end.
-# ponytail: hardcoded demo target; general base_url/param synthesis from the spec is a later task.
+# Demo hook: for spec targets whose required params have no example/default, supply known-good
+# values so the proven Open-Meteo flow works end to end. The base URL comes from the spec's own
+# `servers` (app.servers), not from here.
+# ponytail: hardcoded demo params; general param synthesis from the spec is piece 5.
 _DEMO_TARGETS = {
-    "/v1/forecast": {"base_url": "https://api.open-meteo.com",
-                     "params": {"latitude": 52.52, "longitude": 13.41}},
+    "/v1/forecast": {"params": {"latitude": 52.52, "longitude": 13.41}},
 }
 
 
@@ -208,14 +209,6 @@ def _code_files(generated: list[dict]) -> list[dict]:
     return files
 
 
-def _resolve_base_url(spec: dict, path: str) -> str | None:
-    servers = spec.get("servers") or []
-    if servers and servers[0].get("url"):
-        return servers[0]["url"]
-    demo = _DEMO_TARGETS.get(path)
-    return demo["base_url"] if demo else None
-
-
 def _example_value(param: dict, schema: dict):
     """A value for one parameter from the spec: example, then default, then (if neither) the first
     non-null enum member. An array gets a list: its own example/default, else one synthesised item."""
@@ -255,7 +248,7 @@ def _required_kwargs(spec: dict, path: str, method: str, params: list[dict]) -> 
     return kwargs
 
 
-def _live_validate(spec: dict, generated: list[dict], api_key: str | None = None,
+def _live_validate(spec: dict, generated: list[dict], spec_url: str, api_key: str | None = None,
                    provider: str | None = None, model: str | None = None) -> list[dict]:
     """Sandbox-validate each idempotent GET endpoint, self-correcting on failure. Returns a
     per-endpoint verdict list (never the generated code itself — keep the KV result small).
@@ -271,11 +264,15 @@ def _live_validate(spec: dict, generated: list[dict], api_key: str | None = None
             verdicts.append({"endpoint": endpoint, "status": "generated_only",
                              "reason": "non-GET; not called live"})
             continue
-        base_url = _resolve_base_url(spec, endpoint["path"])
-        kwargs = _required_kwargs(spec, endpoint["path"], endpoint["method"], item["params"])
-        if base_url is None or kwargs is None:
+        base_url, base_url_problem = resolve_base_url(spec, endpoint["path"], endpoint["method"], spec_url)
+        if base_url is None:
             verdicts.append({"endpoint": endpoint, "status": "generated_only",
-                             "reason": "no base_url or required-param values available"})
+                             "reason": f"no usable base URL ({base_url_problem})"})
+            continue
+        kwargs = _required_kwargs(spec, endpoint["path"], endpoint["method"], item["params"])
+        if kwargs is None:
+            verdicts.append({"endpoint": endpoint, "status": "generated_only",
+                             "reason": "required-param values unavailable"})
             continue
 
         with tempfile.TemporaryDirectory() as pkg_root:
@@ -356,6 +353,7 @@ def run(spec_url: str, reporter: Reporter | None = None) -> dict:
         # (F2) — the plain resolve_and_validate_host + requests.get this replaced only checked once.
         resp = _redirect_safe_get(spec_url, timeout=15)
         resp.raise_for_status()
+        final_spec_url = resp.url  # after redirects: relative `servers` URLs resolve against this
         # Version gate on the parsed document BEFORE $ref resolution, so an unsupported spec never
         # triggers a remote $ref fetch. The label is strictly version-shaped (never the URL or raw
         # spec text), so it is safe for the public Action log and the run record.
@@ -407,7 +405,7 @@ def run(spec_url: str, reporter: Reporter | None = None) -> dict:
             callback_secret=os.environ.get("RELAY_CALLBACK_SECRET"),
             has_byok=has_byok,
             provider_call=lambda api_key, provider, model: _live_validate(
-                spec, generated, api_key=api_key, provider=provider, model=model),
+                spec, generated, final_spec_url, api_key=api_key, provider=provider, model=model),
         )
 
         # A run fails if any endpoint that was actually live-called ended up not passing.

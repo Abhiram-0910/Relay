@@ -197,6 +197,39 @@ def test_skips_corrector_entirely_on_timeout(tmp_path: Path) -> None:
     assert result.final_report["status"] == sandbox.STATUS_TIMEOUT
 
 
+def test_unfixable_statuses_are_one_named_set() -> None:
+    assert correct.UNFIXABLE_STATUSES == {sandbox.STATUS_TIMEOUT, sandbox.STATUS_SSRF_BLOCKED}
+
+
+def test_ssrf_blocked_never_enters_the_ladder(monkeypatch, tmp_path: Path) -> None:
+    """The pre-flight refused the target host. The corrector can only patch the client, never the
+    base URL, so no attempt is spent: through ci_runner's real _live_validate -> self_correct, the
+    corrector adapter is never called and the verdict is ssrf_blocked, which status.ts labels."""
+    from app import ci_runner
+    from tests.test_error_code_coverage import LABELS, TONES
+
+    corrector_calls = []
+    monkeypatch.setattr(correct, "_resolve_corrector",
+                        lambda provider: lambda *a, **k: corrector_calls.append(a) or {})
+    sandbox_calls = []
+
+    def blocked(pkg, call_spec):
+        sandbox_calls.append(call_spec["base_url"])
+        return _report(sandbox.STATUS_SSRF_BLOCKED)
+
+    monkeypatch.setattr(ci_runner, "run_in_sandbox", blocked)
+    spec = {"openapi": "3.0.3", "servers": [{"url": "http://127.0.0.1:9"}], "paths": {"/x": {"get": {}}}}
+    item = {"endpoint": {"method": "GET", "path": "/x"}, "params": [], "class_name": "C",
+            "method_name": "get_x", "models_code": "", "client_code": ""}
+
+    [verdict] = ci_runner._live_validate(spec, [item], "https://specs.example/openapi.json")
+
+    assert sandbox_calls == ["http://127.0.0.1:9"]  # the pre-flight ran once, on the resolved URL
+    assert corrector_calls == []
+    assert (verdict["status"], verdict["passed"], verdict["attempts"]) == ("ssrf_blocked", False, [])
+    assert "ssrf_blocked" in LABELS and "ssrf_blocked" in TONES
+
+
 def test_classify_corrector_exception_shared_vs_byok() -> None:
     """The same exception maps to a different code depending on whether the key was shared or the
     user's own — quota and auth are the two buckets where the message/fix genuinely differs."""

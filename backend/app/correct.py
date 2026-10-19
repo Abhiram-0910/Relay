@@ -23,7 +23,7 @@ from typing import Callable
 
 import requests
 
-from app.sandbox import STATUS_PASS, STATUS_TIMEOUT, run_in_sandbox
+from app.sandbox import STATUS_PASS, STATUS_SSRF_BLOCKED, STATUS_TIMEOUT, run_in_sandbox
 
 # Model IDs kept as constants so swapping is one line. gemini-2.5-flash was retired for new API
 # keys ("no longer available to new users"), so Flash is pinned to the current stable 3.x line;
@@ -428,6 +428,15 @@ def _ladder_for(model: str | None) -> tuple[str, ...]:
     return (model,) * _BYOK_MAX_ATTEMPTS if model else DEFAULT_LADDER
 
 
+# Sandbox statuses no code patch can fix: stop before the ladder rather than burning an attempt
+# (tokens, or scarce Pro quota on the shared key).
+# - sandbox_timeout: the target API was slow, not the generated code wrong. ponytail: safe *because*
+#   generated clients don't have their own retry/backoff loops; revisit if that ever changes.
+# - ssrf_blocked: the pre-flight refused the target host. The corrector can only patch the client,
+#   never the base URL, so no patch changes the outcome.
+UNFIXABLE_STATUSES = frozenset({STATUS_TIMEOUT, STATUS_SSRF_BLOCKED})
+
+
 def self_correct(
     pkg_dir: Path,
     call_spec: dict,
@@ -461,11 +470,7 @@ def self_correct(
     for model_id in ladder:
         if report["status"] == STATUS_PASS:
             break
-        # ponytail: a timeout means the target API was slow, not that the generated code is wrong —
-        # skip straight to fail rather than burning a ladder attempt (tokens, or scarce Pro quota on
-        # the shared key) on a condition no patch can fix. Safe *because* generated clients don't
-        # currently have their own retry/backoff loops; revisit if that ever changes.
-        if report["status"] == STATUS_TIMEOUT:
+        if report["status"] in UNFIXABLE_STATUSES:
             break
 
         models_code = (pkg_dir / _MODELS_FILE).read_text()

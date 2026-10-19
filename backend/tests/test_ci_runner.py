@@ -15,19 +15,27 @@ from prance.util.url import ResolutionError as PranceResolutionError
 
 from app import ci_runner
 from app.byok import ByokFetchError, ByokKeyMissingError
-from app.ci_runner import Reporter, _code_files, _required_kwargs, _resolve_base_url
+from app.ci_runner import Reporter, _code_files, _required_kwargs
 from app.sandbox import SandboxError, SSRFError
 
 
 def test_resolve_base_url_prefers_spec_servers() -> None:
+    from app.servers import resolve_base_url
+
     spec = {"servers": [{"url": "https://api.example.com"}], "paths": {}}
-    assert _resolve_base_url(spec, "/anything") == "https://api.example.com"
+    assert resolve_base_url(spec, "/anything", "get", "https://specs.example/o.json") == (
+        "https://api.example.com", None)
 
 
-def test_resolve_base_url_demo_fallback_when_servers_empty() -> None:
+def test_resolve_base_url_falls_back_to_the_spec_origin_not_a_demo_hook() -> None:
+    """Empty servers mean "/" per OpenAPI: the spec document's own origin. The Open-Meteo base URL
+    now comes from that spec's path-item servers, never from _DEMO_TARGETS."""
+    from app.servers import resolve_base_url
+
     spec = {"servers": [], "paths": {}}
-    assert _resolve_base_url(spec, "/v1/forecast") == "https://api.open-meteo.com"
-    assert _resolve_base_url(spec, "/unknown") is None
+    assert resolve_base_url(spec, "/v1/forecast", "get", "https://specs.example/a/o.json") == (
+        "https://specs.example", None)
+    assert "base_url" not in ci_runner._DEMO_TARGETS["/v1/forecast"]
 
 
 def _kwargs_for(parameters: list[dict], path: str = "/x", path_item_parameters: list[dict] = ()):

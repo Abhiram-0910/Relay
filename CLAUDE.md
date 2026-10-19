@@ -1,7 +1,7 @@
 # CLAUDE.md — relay
 
 ## Project Overview
-**What this project does:** Point it at an OpenAPI/Swagger spec URL, get back a working typed
+**What this project does:** Point it at an OpenAPI 3.0/3.1 spec URL, get back a working typed
 API client (Python or TypeScript), validated by actually running the generated code against the
 live or mocked target API in a sandboxed Docker container — not just checked for compiling.
 Stretch goal: also emit an MCP-server-compliant tool wrapper from the same pipeline.

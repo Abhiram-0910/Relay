@@ -1,5 +1,6 @@
 import { StatusBadge } from "@/components/StatusBadge";
 import { suggestsByok } from "@/lib/errors";
+import { skippedSummary } from "@/lib/report";
 import { labelOf, styleOf, toneOf } from "@/lib/status";
 import type { RunResult, ValidatedEndpoint } from "@/lib/types";
 
@@ -71,7 +72,7 @@ export function ValidationReport({ result }: { result: RunResult }) {
       {result.skipped && result.skipped.length > 0 && (
         <details className="text-sm">
           <summary className="cursor-pointer text-muted">
-            {result.skipped.length} operation{result.skipped.length > 1 ? "s" : ""} skipped (no JSON response)
+            {skippedSummary(result.skipped.length)}
           </summary>
           <ul className="mt-2 space-y-1">
             {result.skipped.map((s, i) => (
