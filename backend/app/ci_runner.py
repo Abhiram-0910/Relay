@@ -332,6 +332,11 @@ def run(spec_url: str, reporter: Reporter | None = None) -> dict:
                      for it in items if it["status"] == "generated"]
         skipped = [{"endpoint": it["endpoint"], "reason": it["reason"]}
                    for it in items if it["status"] == "skipped"]
+        # A generator crash is skipped, not fatal, but must stay visible in the Action log. The
+        # path is spec text, so repr() it: no raw newline can start a `::workflow-command::` line.
+        for s in skipped:
+            if s["reason"].startswith("generator_error"):
+                print(f"skipped {s['endpoint']['method']} {s['endpoint']['path']!r}: {s['reason']}")
         rep.send("running", stage="generated",
                  progress={"generated": len(generated), "skipped": len(skipped)})
 

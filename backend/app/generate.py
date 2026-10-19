@@ -19,6 +19,12 @@ from datamodel_code_generator import generate as generate_models
 HTTP_METHODS = {"get", "post", "put", "patch", "delete", "options", "head"}
 JSON_TYPE_TO_PY = {"integer": "int", "string": "str", "number": "float", "boolean": "bool"}
 
+
+class UnsupportedOperation(ValueError):
+    """An operation this generator deliberately skips (e.g. no JSON response). Its message is ours,
+    so it is reported verbatim; any other exception is reported by type only."""
+
+
 # SECURITY: operationId, parameter names, and the path itself all come straight from the
 # untrusted spec and get spliced into GENERATED PYTHON SOURCE — an identifier position for the
 # first two, and (see _safe_path_fstring) a live f-string expression position for the path.
@@ -38,6 +44,38 @@ def _safe_identifier(name: str, fallback: str) -> str:
     return fallback
 
 
+def _safe_class_name(name: str, prefix: str) -> str:
+    """PascalCase of spec text (ASCII letters/digits only), safe as a Python class name. The only
+    way that can still be invalid is a leading digit ("3D Api", "1st-op"), which gets `prefix`."""
+    pascal = _to_pascal_case(name)
+    return prefix + pascal if pascal[:1].isdigit() else pascal
+
+
+def _safe_docstring_text(text: str, limit: int = 80) -> str:
+    """Spec text made inert inside a generated triple-quoted docstring: non-printable characters
+    (newlines, NUL, bidi/format controls, lone surrogates) become spaces, and quotes/backslashes —
+    the only characters that can end or escape the literal — are neutralised."""
+    text = "".join(c if c.isprintable() else " " for c in str(text))
+    return text.replace("\\", "/").replace('"', "'")[:limit]
+
+
+def _fstring_literal(text: str) -> str:
+    """Escape spec text for the literal part of a double-quoted f-string: braces doubled, quote and
+    backslash escaped, non-printable characters as \\U escapes. Without this a `"` in a path closes
+    the URL string and the rest of the path runs as code in the generated method."""
+    out = []
+    for c in text:
+        if c in "{}":
+            out.append(c * 2)
+        elif c in '"\\':
+            out.append("\\" + c)
+        elif not c.isprintable():
+            out.append(f"\\U{ord(c):08x}")
+        else:
+            out.append(c)
+    return "".join(out)
+
+
 def _safe_path_fstring(path: str, path_param_locals: dict[str, str]) -> str:
     """Render `path` as the f-string body used in the generated client. OpenAPI's `{param}` path
     templating is reused here AS a live Python f-string substitution by design, so without this,
@@ -45,12 +83,16 @@ def _safe_path_fstring(path: str, path_param_locals: dict[str, str]) -> str:
     `/x{__import__('os').system(...)}`) and have it evaluated every time the generated method
     runs. Only a `{name}` matching a DECLARED path parameter becomes a live substitution, and
     always via that parameter's already-validated local identifier — never the raw spec text, even
-    when the declared name happens to itself be a valid identifier. Anything else inside braces
-    (an undeclared name, an arbitrary expression) is escaped to a literal."""
-    def replace(m: re.Match) -> str:
+    when the declared name happens to itself be a valid identifier. Everything else (undeclared
+    brace groups, stray braces, quotes, backslashes, control characters) is an escaped literal."""
+    out, pos = [], 0
+    for m in _BRACE_GROUP_RE.finditer(path):
         local = path_param_locals.get(m.group(1))
-        return "{" + local + "}" if local else "{{" + m.group(1) + "}}"
-    return _BRACE_GROUP_RE.sub(replace, path)
+        if local:
+            out.append(_fstring_literal(path[pos:m.start()]) + "{" + local + "}")
+            pos = m.end()
+    out.append(_fstring_literal(path[pos:]))
+    return "".join(out)
 
 CLIENT_TEMPLATE = jinja2.Template(
     '''"""Generated client for {{ title }}."""
@@ -139,15 +181,15 @@ def _merge_python_modules(sources: list[str]) -> str:
 def generate_endpoint_client(spec: dict, path: str, method: str, tmp_dir: Path) -> dict:
     """Generate models.py + client.py source for one path+method.
 
-    Raises ValueError if the operation has no JSON response schema — callers
-    should treat that as "skip this endpoint", not a hard failure.
+    Raises UnsupportedOperation (a ValueError) if the operation has no JSON response schema —
+    callers should treat that as "skip this endpoint", not a hard failure.
     """
     operation = spec["paths"][path][method]
     response_schema = _response_schema(operation)
     if response_schema is None:
-        raise ValueError(f"{method.upper()} {path} has no JSON response schema to generate a model from")
+        raise UnsupportedOperation(f"{method.upper()} {path} has no JSON response schema to generate a model from")
 
-    prefix = _to_pascal_case(operation.get("operationId") or f"{method}_{path}") or "Operation"
+    prefix = _safe_class_name(operation.get("operationId") or f"{method}_{path}", "Op") or "Operation"
     response_model = f"{prefix}Response"
     models_code = _generate_model(response_schema, response_model, tmp_dir, "response_models.py")
 
@@ -195,12 +237,12 @@ def generate_endpoint_client(spec: dict, path: str, method: str, tmp_dir: Path) 
         operation.get("operationId") or "",
         f"{method}_" + re.sub(r"[^a-zA-Z0-9]+", "_", path).strip("_"),
     )
-    class_name = _to_pascal_case(spec.get("info", {}).get("title", "Api")) + "Client"
+    class_name = _safe_class_name(spec.get("info", {}).get("title", "Api"), "Api") + "Client"
     model_imports = response_model + (f", {request_model}" if request_model else "")
     path_param_locals = {p["name"]: local_name[p["name"]] for p in path_params}
 
     client_code = CLIENT_TEMPLATE.render(
-        title=spec.get("info", {}).get("title", ""),
+        title=_safe_docstring_text(spec.get("info", {}).get("title", "")),
         response_model=response_model,
         model_imports=model_imports,
         class_name=class_name,
@@ -211,6 +253,10 @@ def generate_endpoint_client(spec: dict, path: str, method: str, tmp_dir: Path) 
         params_kwarg_line=params_kwarg_line,
         json_kwarg_line=json_kwarg_line,
     )
+    # Output that doesn't compile (e.g. a param named `self`, or path+query sharing a name) is
+    # skipped here, not shipped: SyntaxError reaches generate_all_endpoints' generator_error skip.
+    compile(models_code, "models.py", "exec")
+    compile(client_code, "client.py", "exec")
 
     return {
         "endpoint": {"method": method.upper(), "path": path},
@@ -235,11 +281,14 @@ def generate_all_endpoints(spec: dict, tmp_dir: Path) -> Iterator[dict]:
         try:
             result = generate_endpoint_client(spec, path, method.lower(), tmp_dir)
             yield {"index": index, "total": total, "status": "generated", **result}
-        except ValueError as exc:
+        except Exception as exc:
+            # One bad operation must not take down the rest. Only the exception TYPE goes in the
+            # reason: the message can carry raw spec text, and the reason is logged publicly.
+            reason = str(exc) if isinstance(exc, UnsupportedOperation) else f"generator_error: {type(exc).__name__}"
             yield {
                 "index": index,
                 "total": total,
                 "status": "skipped",
                 "endpoint": {"method": method.upper(), "path": path},
-                "reason": str(exc),
+                "reason": reason,
             }
