@@ -407,6 +407,28 @@ def test_openai_compatible_rejected_json_schema_is_model_unsupported() -> None:
                       api_key="sk-user")
 
 
+@pytest.mark.parametrize("synthetic", [
+    {"code": "invalid_json_schema", "param": "response_format",
+     "message": "Invalid schema for response_format 'client_patch': 'additionalProperties' is "
+                "required to be supplied and to be false. This model does not support it otherwise."},
+    {"code": None, "param": "response_format",
+     "message": "Invalid schema for response_format 'client_patch': In context=(), 'required' is "
+                "required to be supplied."},
+], ids=["code_invalid_json_schema", "message_invalid_schema"])
+def test_openai_compatible_our_invalid_schema_is_not_model_unsupported(synthetic) -> None:
+    """SYNTHETIC bodies (shape from memory, not captured): OpenAI answers an invalid strict schema
+    with a 400 on param response_format. That is OUR defect and hits every model, so it must stay an
+    unclassified HTTPError, never "pick a different model" — even if the text says "does not support"."""
+    from unittest.mock import patch as mock_patch
+
+    corrector = correct.openai_compatible_corrector("https://api.openai.com/v1")
+    with mock_patch("app.correct.requests.post",
+                    return_value=_fake_http_error_body(400, {"type": "invalid_request_error", **synthetic})):
+        with pytest.raises(requests.HTTPError):
+            corrector("gpt-5", {}, _report(sandbox.STATUS_CALL_FAILED), "# m\n", "# c\n",
+                      api_key="sk-user")
+
+
 @pytest.mark.parametrize("status_code,error,expected", [
     (401, {"code": "invalid_api_key", "message": "Incorrect API key provided: sk-***."},
      correct.CorrectorAuthError),

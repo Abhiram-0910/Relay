@@ -50,9 +50,21 @@ const OPENAI_NON_CHAT_SUBSTRINGS = [
   "image", "transcribe", "tts", "realtime", "whisper", "embedding", "moderation", "sora", "dall-e",
   "instruct", "davinci", "babbage",
 ];
+// Exact ids that 404'd on /v1/chat/completions in a real probe on 2026-10-19 (deprecated, or
+// v1/responses-only). Mirrors the 404 records in worker/test/fixtures/openai-rejections.json; the
+// test fails if the two drift. Exact ids only — no family-level rule is inferred from these.
+export const OPENAI_KNOWN_DEAD_IDS = new Set([
+  "babbage-002", "davinci-002", "gpt-3.5-turbo-1106", "gpt-3.5-turbo-instruct",
+  "gpt-3.5-turbo-instruct-0914", "gpt-4o-mini-search-preview", "gpt-4o-mini-search-preview-2025-03-11",
+  "gpt-4o-search-preview", "gpt-4o-search-preview-2025-03-11", "gpt-5-chat-latest", "gpt-5-codex",
+  "gpt-5.1-chat-latest", "gpt-5.1-codex", "gpt-5.1-codex-max", "gpt-5.1-codex-mini",
+  "gpt-5.2-chat-latest", "gpt-5.2-codex", "gpt-5.3-chat-latest", "gpt-5.3-codex",
+  "gpt-audio-mini-2025-10-06",
+]);
 const isOpenAiChatModel = (id) =>
   OPENAI_CHAT_PREFIXES.some((p) => id.startsWith(p)) &&
-  !OPENAI_NON_CHAT_SUBSTRINGS.some((s) => id.includes(s));
+  !OPENAI_NON_CHAT_SUBSTRINGS.some((s) => id.includes(s)) &&
+  !OPENAI_KNOWN_DEAD_IDS.has(id);
 const OPENROUTER_MAX_MODELS = 300; // UI-sanity ceiling after the capability filter; not curation
 
 const bearer = (apiKey) => ({ Authorization: `Bearer ${apiKey}` });

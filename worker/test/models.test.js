@@ -1,7 +1,8 @@
 // worker/test/models.test.js
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
-import { handleModelsFetch } from "../src/models.js";
+import { handleModelsFetch, OPENAI_KNOWN_DEAD_IDS } from "../src/models.js";
 import OPENAI_MODEL_IDS from "./fixtures/openai-model-ids.json";
+import OPENAI_REJECTIONS from "./fixtures/openai-rejections.json";
 
 // Same minimal fake KV the byok/worker suites use.
 class FakeKV {
@@ -212,10 +213,16 @@ describe("handleModelsFetch — per-provider request shape", () => {
     expect(nonChat.length).toBeGreaterThan(0);
     for (const id of nonChat) expect(kept.has(id), id).toBe(false);
     for (const id of MUST_KEEP) expect(kept.has(id), id).toBe(true);
+    for (const id of OPENAI_KNOWN_DEAD_IDS) expect(kept.has(id), id).toBe(false);
 
     const unresolved = [...kept].filter((id) => UNRESOLVED.some((f) => id.includes(f)));
     console.log(`openai filter: kept=${kept.size} excluded=${excluded.length} ` +
       `(unresolved, kept: ${unresolved.length})`);
+  });
+
+  it("OPENAI_KNOWN_DEAD_IDS is exactly the probe's 404 ids (drift fails loudly)", () => {
+    const fixture404 = OPENAI_REJECTIONS.filter((r) => r.status === 404).map((r) => r.id).sort();
+    expect([...OPENAI_KNOWN_DEAD_IDS].sort()).toEqual(fixture404);
   });
 
   it("anthropic uses x-api-key + anthropic-version and maps display_name to label", async () => {

@@ -273,8 +273,11 @@ def _openai_model_unsupported(resp) -> bool:
     if resp.status_code == 400:
         # ponytail: NOT grounded in a captured body (the probe hit billing_not_active first) —
         # matches OpenAI's documented shape for an unsupported structured output. Re-check on a
-        # funded probe.
-        return err.get("param") == "response_format" or "json_schema" in msg
+        # funded probe. Our OWN invalid strict schema is also a 400 on param response_format; that
+        # is a defect hitting every model, so it must never read as "pick a different model".
+        if err.get("code") == "invalid_json_schema" or msg.startswith("Invalid schema"):
+            return False
+        return "not supported with this model" in msg or "does not support" in msg
     return False
 
 
