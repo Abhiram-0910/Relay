@@ -8,11 +8,11 @@ Claude reads this at the START of every new session to understand what happened 
 ## Project State
 **Last updated:** 2026-10-19 (Session 12) — **Phase 3 in progress**
 **Current branch:** main
-**Overall status:** MVP is **complete and live-verified end-to-end, frontend included** (see Session 2 close, 2026-07-26). Vercel frontend (`https://relay-cyan-rho.vercel.app`) → Cloudflare Worker (`https://relay-worker.abhiram-dev.workers.dev`) → GitHub Actions → Docker sandbox → Gemini self-correction → KV, with per-IP rate limiting, run-id isolation, and a code viewer. A real browser run polls to `Succeeded` / `verified_pass` and shows the real generated client. Nothing in the MVP is claimed-but-unproven. Tests (as of Session 12): backend 168 · worker 52 · frontend 40 hermetic, all green.
+**Overall status:** MVP is **complete and live-verified end-to-end, frontend included** (see Session 2 close, 2026-07-26). Vercel frontend (`https://relay-cyan-rho.vercel.app`) → Cloudflare Worker (`https://relay-worker.abhiram-dev.workers.dev`) → GitHub Actions → Docker sandbox → Gemini self-correction → KV, with per-IP rate limiting, run-id isolation, and a code viewer. A real browser run polls to `Succeeded` / `verified_pass` and shows the real generated client. Nothing in the MVP is claimed-but-unproven. Tests (as of Session 12): backend 414 · worker 52 · frontend 43 hermetic, all green.
 
 **Phase 2 (scoped 2026-07-26, build starting Session 3, 2026-07-27):** BYOK security infrastructure → multi-provider LLM (Gemini/OpenAI/Anthropic/Grok/OpenRouter) → honest error taxonomy → full QA re-verification → visual/UX pass → `/security-review` + remediation → final retest and deliver. **Progress:** Step 1 (BYOK) CLOSED live (Session 4). Step 2 (multi-provider) CLOSED live (Session 6, commits `4866d2a`→`7f846fb`) — see Session 6 for the full receipt; one accepted gap logged there (corrector proven live independently of the deployed pipeline, not together in one run — no test-injection hook exists in the public API for that). Step 3 (honest error taxonomy) CLOSED (Session 7, commits `caf86cf`→`dc5e5cf`) — see Session 7 for the full receipt; one deliberate scope boundary logged there at the time (per-attempt corrector codes rendered as raw tokens in the compact attempts list), closed the next step (Step 4 gave `status.ts` labels to all 7 corrector codes). Step 4 (full QA pass) CLOSED (Session 8, commits `bbb35fd`→`572c18d`) — see Session 8 for the full receipt, including a real production bug (the Action's infra-failure watchdog silently overwriting every classified error) found live and fixed, not just a coverage-extension step. Step 5 (visual/UX pass) CLOSED (Session 9, commits `c21ca2a`→`8ce5b3d`) — see Session 9 for the full receipt and a logged pattern-to-watch (`status.ts` caught incomplete twice now). Step 6 (security review) CLOSED (Session 10, commits `03c8b2c`→`c09b7ee`) — see Session 10 for the full receipt, including a prominent standalone callout for F5 (the most severe finding in the project: RCE via generated code an end user downloads and trusts) and an explicit note that the scan's own adversarial verification panel never completed, substituted with an independent manual trace. **Step 7 (final retest, README, deliver) CLOSED (Session 11, commits `19b2a31`→`9e28f98`)** — see Session 11 for the full receipt, including a full residuals audit across Sessions 1–10 and two accumulated documentation inconsistencies caught and fixed. **Phase 2 is now fully closed** — every step has its own live receipt, nothing claimed-but-unproven remains.
 
-**Phase 3 (scoped 2026-10-19, in progress):** verified-live generation with per-operation receipts → generator fidelity → general param synthesis → target-API auth → receipt schema + MCP output. Design: ARCHITECTURE.md "Phase 3 — verified-live USP and target auth". Checklist: TODO.md Phase 3 sprint. **Progress:** pieces 0, 1, 2 (+2b, 2c), 3a, 3b, 3c and 4b are done (`e1ba802`→`2edfe6e`, see Session 12 and its addendum). Next: piece 4c (`params.py`). Open live-receipt gaps: OpenAI billing is inactive on the project's OpenAI key, so 3a and the 400 json_schema rule are hermetic-only.
+**Phase 3 (scoped 2026-10-19, in progress):** verified-live generation with per-operation receipts → generator fidelity → general param synthesis → target-API auth → receipt schema + MCP output. Design: ARCHITECTURE.md "Phase 3 — verified-live USP and target auth". Checklist: TODO.md Phase 3 sprint. **Progress:** pieces 0, 1, 2 (+2b, 2c), 3a, 3b, 3c, 4b, 4c, 4d, 4e-i and 4e-ii are done (`e1ba802`→`7fca3ec`, see Session 12 and its addenda). Next: piece 4f (corpus). Open live-receipt gaps: OpenAI billing is inactive on the project's OpenAI key, so 3a and the 400 json_schema rule are hermetic-only.
 
 ---
 
@@ -489,5 +489,82 @@ ignoring datamodel-codegen's timestamp line.
 **Tests:** backend **168** · worker **52** · frontend **40**.
 
 **Next piece:** 4c, `params.py` (hermetic, not wired in). See TODO.md Phase 3 sprint.
+
+### Session 12 addendum 2 — 2026-10-19 — pieces 4c, 4d, 4e-i, 4e-ii (Claude Code)
+**4c — `params.py` (`8bf5160`), hermetic, not wired in.** Plans one operation's parameters:
+- merges path-item and operation parameters, the operation winning by (name, in);
+- supports path, query and header. It records ignored parameters (optional cookie,
+  Authorization/Accept/Content-Type headers, optional `content` parameters) and skips operations it
+  can't call correctly (unresolved `$ref`, required cookie or content parameter, object values,
+  deepObject/matrix/label styles);
+- allocates collision-free local names (never a keyword, `self`/`body`/`requests`/`response`, a
+  model class name, `__x` or `_relay_*`) and never changes a wire name;
+- gives static type hints: `Literal` enums (repr()'d, aliased past 100 chars), 3.0 `nullable` and
+  3.1 type lists, arrays to depth 2, scalar unions. Anything weaker becomes `Any` with a lossy code;
+- `SERIALISER_SOURCE`: standalone query/header/path helpers emitted into each client.
+The naming helpers moved verbatim to `backend/app/naming.py`.
+
+**4d — wired in (`554a2aa`).**
+- Signatures: path parameters and a required body positional, everything else keyword-only.
+- **Query booleans and arrays fixed:** `true`/`false` instead of `True`/`False`; arrays follow
+  `explode` (repeat vs comma); `None` omitted.
+- **Path values are percent-encoded** (a behaviour fix: `id="a/b"` no longer changes the path).
+- Header parameters are supported; `self`/`body`/`requests`/`page-size` work as names.
+- **Generated output is now byte-reproducible:** datamodel-codegen runs with
+  `disable_timestamp=True`.
+- `ci_runner._required_kwargs` reads the parameter table, keyed by local name.
+- **`lossy`/`ignored` reach only `result.parameters`;** they are not shown in the UI or printed
+  to the Action log.
+- Receipts:
+  - host call to the real Open-Meteo API: HTTP 200, `hourly=temperature_2m,relative_humidity_2m`
+    went out comma-joined, both keys came back;
+  - sandbox: the same call `verified_pass`;
+  - the Docker live tests pass.
+
+**4e-i — spec-version gate (`841b8f1`).**
+- **The gate runs on the parsed document before `$ref` resolution,** so an unsupported spec never
+  triggers a remote fetch.
+- OpenAPI 3.0.x/3.1.x proceed. Swagger 2.0 and other versions are `unsupported_spec_version`; a
+  missing, doubled, non-string or malformed field is `spec_invalid`.
+- `spec_version` (`swagger 2.0` / `openapi 3.1.0`, else `unrecognised`, never the URL) is printed
+  on every run and published in progress and the result.
+- 0 generated operations is `no_operations_generated`, with the skipped list in the failed
+  result.
+- A backend test fails if any classifier code lacks an `errors.ts` message or a `status.ts`
+  tone/label.
+- Receipts (real specs, no sandbox):
+  - Swagger Petstore v2: `unsupported_spec_version`, `swagger 2.0`, 0 resolver calls;
+  - Open-Meteo: `openapi 3.1.0`, generated;
+  - Petstore v3: `openapi 3.0.4`, 14 generated.
+
+**4e-ii — servers and unfixable statuses (`7fca3ec`).**
+- **`servers.py` resolves the base URL from the spec:** operation > path item > top level; "/" (the
+  spec's origin) when all are absent; variables via their defaults; relative URLs against the
+  final spec URL after redirects.
+- Validation: http/https only; a DNS hostname or bracketed IPv6; no userinfo; no whitespace or
+  control characters, checked before urlsplit can strip CR/LF; no query or fragment; 2048-char
+  cap.
+- **`_DEMO_TARGETS` no longer supplies a base URL:** Open-Meteo's comes from its path-item servers.
+- `UNFIXABLE_STATUSES = {sandbox_timeout, ssrf_blocked}` stops the ladder before any corrector
+  call.
+- Receipts (real Docker sandbox, a stub corrector that records calls and fails):
+  - **Open-Meteo:** base URL `https://api.open-meteo.com`, `verified_pass`, 0 corrector calls.
+  - **Petstore v3:** base URL `https://petstore3.swagger.io/api/v3`. 4 GETs were called live:
+    - `/pet/findByStatus`: `verified_live_validation_failed`. The live API returns pets without
+      `name`, which its own spec marks required: a real "spec lies" finding.
+    - `/store/inventory`: `call_failed`, HTTP 500.
+    - `/user/login`: `call_failed`, a non-JSON body although the spec declares JSON.
+
+    The other 10 operations are `generated_only`. The stub corrector was called 3 times.
+  - **Loopback server (`http://127.0.0.1:9`):** `ssrf_blocked`, 0 corrector calls.
+
+**Finding:** `call_failed` mixes fixable cases (a malformed request, a client crash) with ones no
+patch can fix (HTTP 5xx, connection errors, an in-container request timeout, 401/403, a non-JSON
+body the spec promised as JSON). All of them enter the corrector ladder today; Petstore's 500 and
+non-JSON login did. Logged in TODO.md.
+
+**Tests:** backend **414** · worker **52** · frontend **43**.
+
+**Next piece:** 4f, the corpus. See TODO.md Phase 3 sprint.
 
 <!-- Copy the block above for each new session -->

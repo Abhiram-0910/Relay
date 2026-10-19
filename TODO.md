@@ -21,17 +21,10 @@ auth". The Phase 2 sprint below is closed and kept as history.
 - [ ] **3b-fix — parked:** the probe must abort on non-transient billing errors (`billing_not_active`) instead of retrying them.
 - **Piece 4 — generator fidelity,** one commit per sub-piece:
   - [x] **4b — hardening** (`2edfe6e`): spec text inert in generated source (path f-string escaping, title and identifier sanitising), per-operation exception isolation, `compile()` gate, `assert_generated_source_inert`, 13-payload hostile-spec canary test.
-  - [ ] **4c — `params.py`:** parameter table, name allocator, types, serialisation helper, signature rendering. Hermetic, not wired in.
-  - [ ] **4d — wire `params.py` in:** the template uses it; `ci_runner` consumes the parameter table; update the four signature-text tests; local Docker Open-Meteo run with a multi-valued `hourly`.
-  - [ ] **4e — servers and spec versions:**
-    - servers resolution: operation > path item > top level; relative URLs resolved against the spec URL; server variables via their defaults;
-    - the corrector skips `ssrf_blocked`;
-    - a run with 0 generated operations ends failed with a new code;
-    - `unsupported_spec_version` for Swagger 2.0 and for any OpenAPI 3.x other than 3.0.x/3.1.x; `spec_invalid` for a missing or malformed version field. The version is detected from the document's `swagger`/`openapi` field, never from the URL;
-    - `spec_version` logged on every run in a strict format (`swagger 2.0` or `openapi 3.x.y`), regex-validated before storing or printing. Never log the spec URL;
-    - plain-language message: "This spec's version isn't supported. Relay verifies OpenAPI 3.0 and 3.1. For Swagger 2.0, convert it with swagger2openapi or the Swagger Editor and re-submit.";
-    - wired into the backend classifier, the Worker passthrough, `errors.ts`, `status.ts` and every test in one commit, with a grep for every enumeration site;
-    - the Swagger wording fixes at `page.tsx:108`, `errors.ts:34`, `README.md:3`, `generate.yml:13` and `ci_runner.py:7`.
+  - [x] **4c — `params.py`** (`8bf5160`): parameter table, name allocator, types, serialisation helper, signature rendering. Hermetic, not wired in.
+  - [x] **4d — wire `params.py` in** (`554a2aa`): the template uses it; `ci_runner` consumes the parameter table; signature-text tests became behavioural; local Docker Open-Meteo run with a multi-valued `hourly` passed.
+  - [x] **4e-i — spec-version gate** (`841b8f1`): `unsupported_spec_version` and `spec_invalid` decided before `$ref` resolution; `spec_version` logged and published; `no_operations_generated`; Swagger wording fixes; code-coverage test across backend, `errors.ts` and `status.ts`.
+  - [x] **4e-ii — servers and unfixable statuses** (`7fca3ec`): `servers.py` (operation > path item > top level, relative URLs against the final spec URL, variable defaults, validated); `_DEMO_TARGETS` base URL removed; the corrector skips `ssrf_blocked`; neutral skipped summary in the UI.
   - [ ] **4f — corpus:** a manifest of spec URLs plus sha256 (specs not committed; OpenAPI 3.x only; at most ~100 operations each), a script, the first results table, and the generator's dependency versions recorded.
   - **Decision (2026-10-19): Swagger 2.0 is deferred.** Add a converter only if logged usage shows 2.0 specs are common. Piece 4b's step 0 found no Swagger 2.0 dependency anywhere in the repo.
 - [ ] **Piece 5 — general param synthesis:** retire `_DEMO_TARGETS` (`ci_runner.py:140`); publish a corpus table (spec, operations, verified / generated_only / failed).
@@ -51,6 +44,11 @@ auth". The Phase 2 sprint below is closed and kept as history.
 - [ ] Discord logging, one webhook per channel.
 - [ ] Per-user run history.
 - [ ] Scoped chatbot.
+- [ ] `call_failed` mixes fixable and unfixable causes. HTTP 5xx, connection errors, an in-container request timeout, 401/403 and a non-JSON body the spec promised as JSON all enter the corrector ladder today (seen live: Petstore v3 `/store/inventory` HTTP 500, `/user/login` non-JSON). Split them, using `http_status` and the exception type, and stop the ladder for the unfixable ones.
+- [ ] `lossy` and `ignored` reach only `result.parameters`; they are not shown in the UI or printed to the Action log.
+- [ ] **Deployed receipts owed after 00:00 UTC for 4d, 4e-i and 4e-ii.** Run one Open-Meteo run expecting `verified_pass`, and one Swagger v2 URL expecting `unsupported_spec_version`. Use direct curl/jq, not `verify_deployed.sh`, which uses all three of the day's runs.
+- [ ] Check that Vercel deployed `841b8f1` and `7fca3ec` (the frontend changed in both).
+- [ ] The two corrector live tests (`test_gemini_fixes_broken_open_meteo_client`, `test_openai_fixes_broken_open_meteo_client`) need an LLM key and have not been re-run since 4d. Their breakage injection was re-verified against the 4d generator in 4e-i step 0b (sandbox: `verified_live_validation_failed`).
 
 ### Phase 3 security backlog
 - [ ] `spec_url` is a `workflow_dispatch` input, and dispatch inputs are visible in the public Actions UI, so a spec URL carrying a token leaks. Fix direction: the Action fetches the spec URL from `run:{runId}` in KV through the existing authenticated callback instead of receiving it as an input. Until then, the UI should warn against tokenised URLs.
