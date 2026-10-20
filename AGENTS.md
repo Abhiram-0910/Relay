@@ -8,11 +8,11 @@ Claude reads this at the START of every new session to understand what happened 
 ## Project State
 **Last updated:** 2026-10-19 (Session 12) — **Phase 3 in progress**
 **Current branch:** main
-**Overall status:** MVP is **complete and live-verified end-to-end, frontend included** (see Session 2 close, 2026-07-26). Vercel frontend (`https://relay-cyan-rho.vercel.app`) → Cloudflare Worker (`https://relay-worker.abhiram-dev.workers.dev`) → GitHub Actions → Docker sandbox → Gemini self-correction → KV, with per-IP rate limiting, run-id isolation, and a code viewer. A real browser run polls to `Succeeded` / `verified_pass` and shows the real generated client. Nothing in the MVP is claimed-but-unproven. Tests (as of Session 12): backend 414 · worker 52 · frontend 43 hermetic, all green.
+**Overall status:** MVP is **complete and live-verified end-to-end, frontend included** (see Session 2 close, 2026-07-26). Vercel frontend (`https://relay-cyan-rho.vercel.app`) → Cloudflare Worker (`https://relay-worker.abhiram-dev.workers.dev`) → GitHub Actions → Docker sandbox → Gemini self-correction → KV, with per-IP rate limiting, run-id isolation, and a code viewer. A real browser run polls to `Succeeded` / `verified_pass` and shows the real generated client. Nothing in the MVP is claimed-but-unproven. Tests (as of Session 12): backend 469 · worker 52 · frontend 43 hermetic, all green.
 
 **Phase 2 (scoped 2026-07-26, build starting Session 3, 2026-07-27):** BYOK security infrastructure → multi-provider LLM (Gemini/OpenAI/Anthropic/Grok/OpenRouter) → honest error taxonomy → full QA re-verification → visual/UX pass → `/security-review` + remediation → final retest and deliver. **Progress:** Step 1 (BYOK) CLOSED live (Session 4). Step 2 (multi-provider) CLOSED live (Session 6, commits `4866d2a`→`7f846fb`) — see Session 6 for the full receipt; one accepted gap logged there (corrector proven live independently of the deployed pipeline, not together in one run — no test-injection hook exists in the public API for that). Step 3 (honest error taxonomy) CLOSED (Session 7, commits `caf86cf`→`dc5e5cf`) — see Session 7 for the full receipt; one deliberate scope boundary logged there at the time (per-attempt corrector codes rendered as raw tokens in the compact attempts list), closed the next step (Step 4 gave `status.ts` labels to all 7 corrector codes). Step 4 (full QA pass) CLOSED (Session 8, commits `bbb35fd`→`572c18d`) — see Session 8 for the full receipt, including a real production bug (the Action's infra-failure watchdog silently overwriting every classified error) found live and fixed, not just a coverage-extension step. Step 5 (visual/UX pass) CLOSED (Session 9, commits `c21ca2a`→`8ce5b3d`) — see Session 9 for the full receipt and a logged pattern-to-watch (`status.ts` caught incomplete twice now). Step 6 (security review) CLOSED (Session 10, commits `03c8b2c`→`c09b7ee`) — see Session 10 for the full receipt, including a prominent standalone callout for F5 (the most severe finding in the project: RCE via generated code an end user downloads and trusts) and an explicit note that the scan's own adversarial verification panel never completed, substituted with an independent manual trace. **Step 7 (final retest, README, deliver) CLOSED (Session 11, commits `19b2a31`→`9e28f98`)** — see Session 11 for the full receipt, including a full residuals audit across Sessions 1–10 and two accumulated documentation inconsistencies caught and fixed. **Phase 2 is now fully closed** — every step has its own live receipt, nothing claimed-but-unproven remains.
 
-**Phase 3 (scoped 2026-10-19, in progress):** verified-live generation with per-operation receipts → generator fidelity → general param synthesis → target-API auth → receipt schema + MCP output. Design: ARCHITECTURE.md "Phase 3 — verified-live USP and target auth". Checklist: TODO.md Phase 3 sprint. **Progress:** pieces 0, 1, 2 (+2b, 2c), 3a, 3b, 3c, 4b, 4c, 4d, 4e-i and 4e-ii are done (`e1ba802`→`7fca3ec`, see Session 12 and its addenda). Next: piece 4f (corpus). Open live-receipt gaps: OpenAI billing is inactive on the project's OpenAI key, so 3a and the 400 json_schema rule are hermetic-only.
+**Phase 3 (scoped 2026-10-19, in progress):** verified-live generation with per-operation receipts → generator fidelity → general param synthesis → target-API auth → receipt schema + MCP output. Design: ARCHITECTURE.md "Phase 3 — verified-live USP and target auth". Checklist: TODO.md Phase 3 sprint. **Progress:** pieces 0, 1, 2 (+2b, 2c), 3a, 3b, 3c, 4b, 4c, 4d, 4e-i, 4e-ii and 4f are done (`e1ba802`→`26ed462`, see Session 12 and its addenda). **Next piece:** 4g (`call_failed` split), then piece 5 (general param synthesis). Open live-receipt gaps: OpenAI billing is inactive on the project's OpenAI key, so 3a and the 400 json_schema rule are hermetic-only.
 
 ---
 
@@ -207,7 +207,7 @@ Claude reads this at the START of every new session to understand what happened 
 
 **Cost-rule clarification (logged 2026-07-30, scoping Step 2):** the shared `GEMINI_API_KEY` stays free-tier-only forever — never attach billing. BYOK explicitly means the user's OWN provider account/billing (OpenAI/Anthropic/Grok/OpenRouter/their own Gemini key); a user spending on their own key is NOT a violation of this project's zero-cost rule — it is the point of the BYOK feature. The zero-cost constraint governs the shared key only.
 
-**Next:** Step 2 (multi-provider) — spec written into ARCHITECTURE.md ("Step 2 — Multi-provider LLM support" section, 2026-07-30): 3 wire-protocol adapters for 5 providers (Gemini / OpenAI-family / Anthropic-tool-use), raw `requests` (zero new deps), no cross-model escalation on BYOK, live model-list fetch via a new Worker `POST /api/models` with a per-provider 1h KV cache. Now safe to build on a proven key-handling layer.
+**Next (at the time):** Step 2 (multi-provider) — spec written into ARCHITECTURE.md ("Step 2 — Multi-provider LLM support" section, 2026-07-30): 3 wire-protocol adapters for 5 providers (Gemini / OpenAI-family / Anthropic-tool-use), raw `requests` (zero new deps), no cross-model escalation on BYOK, live model-list fetch via a new Worker `POST /api/models` with a per-provider 1h KV cache. Now safe to build on a proven key-handling layer.
 
 ---
 
@@ -240,7 +240,7 @@ Claude reads this at the START of every new session to understand what happened 
 
 **Security note (not a code issue):** a real OpenAI key was exported into the terminal transcript directly by the user this session rather than injected out-of-band. Flagged in-session; not persisted to any file, memory, or commit. User was advised to rotate/revoke it after this session's live runs.
 
-**Next:** Step 3 — honest error taxonomy.
+**Next (at the time):** Step 3 — honest error taxonomy.
 
 ### Session 7 — 2026-08-09 — Step 3 (honest error taxonomy) CLOSED
 **Goal:** Replace every raw exception/HTTP-status surface across the stack with a stable taxonomy of codes, verified against the real backends (SDKs/libraries) rather than assumed, then an honest plain-language layer in the frontend — one piece per commit, backend first (each hermetically tested and committed before moving to the next layer), matching Step 2's discipline.
@@ -260,7 +260,7 @@ Claude reads this at the START of every new session to understand what happened 
 
 **Deliberate scope boundary (not a gap):** per-attempt corrector codes (`corrector_auth_failed`, `quota_exhausted_byok`, etc.) still render as raw tokens in `EndpointRow`'s compact attempts list (`{model}: {status_before} → {status_after}`) — `errorMessage()` returns full sentences that don't fit that inline format, and `status.ts`'s short-label style doesn't cover the new corrector codes either. Left unaddressed rather than forced into either file; not a regression (the single generic `corrector_error` token was equally raw before this step).
 
-**Next:** Step 4 — full QA pass (extend backend/worker/frontend suites to the new surface area, then a real live end-to-end re-verification with a receipt).
+**Next (at the time):** Step 4 — full QA pass (extend backend/worker/frontend suites to the new surface area, then a real live end-to-end re-verification with a receipt).
 
 ### Session 8 — 2026-08-09 — Step 4 (full QA pass) CLOSED
 **Goal:** Extend backend/worker/frontend suites to Phase 2's actual surface area based on a real coverage audit — tracing exactly what's untested and why, not "add more tests" — then a live end-to-end re-verification proving the pieces work together, since Steps 1–3 had each only ever been proven in isolation.
@@ -292,7 +292,7 @@ This bug predates Step 3 — the race between the two steps' callbacks always ex
 
 **Accepted limitation (not fixed this step):** zero component/rendering tests exist anywhere in the frontend — pre-existing, deliberate (pure-fn testing style, no `@testing-library` dependency; decided explicitly, not defaulted into). Worth naming plainly given this session's own results: it's exactly the kind of gap that let the `suggestsByok` bug ship unnoticed. Adding a rendering-test dependency was out of scope for this step regardless.
 
-**Next:** Step 5 — visual/UX pass (`frontend-design` + `ui-ux-pro-max` skills + Magic MCP, after the logic is solid — which, as of this session, it now actually is, not just looked like it).
+**Next (at the time):** Step 5 — visual/UX pass (`frontend-design` + `ui-ux-pro-max` skills + Magic MCP, after the logic is solid — which, as of this session, it now actually is, not just looked like it).
 
 ### Session 9 — 2026-08-10 — Step 5 (visual/UX pass) CLOSED
 **Goal:** Design refinement on top of a now-functionally-complete app — no new backend logic. Inventory the frontend as it actually exists (not assumed), identify specific UX gaps in the Steps 1–4 features that were built logic-first with no design attention, and apply a scoped set of fixes on top of the existing dark-OLED aesthetic — refinement, not a rebuild.
@@ -320,7 +320,7 @@ This bug predates Step 3 — the race between the two steps' callbacks always ex
 
 **Tests:** frontend **37** (was 34) — `byok.ts`'s new duration-formatting logic got real unit coverage (sub-second/seconds/minutes gaps, tooltip precision preserved), `status.ts`'s new pipeline-code entries got the same reachability-style coverage as Step 4's corrector codes. The JSX-only changes (Banner wiring, EndpointRow coloring, spinners) added no new tests — no rendering-library dependency exists to test them with (still true; not revisited this step), consistent with Step 4's accepted limitation. `tsc --noEmit` and `next lint` run clean after every one of the 4 commits, not just at the end.
 
-**Next:** Step 6 — security review (`/security-review`, plus the Claude Security plugin's deeper "Scan codebase" if available).
+**Next (at the time):** Step 6 — security review (`/security-review`, plus the Claude Security plugin's deeper "Scan codebase" if available).
 
 ### Session 10 — 2026-08-11 — Step 6 (security review) CLOSED
 **Goal:** Run whatever security review tooling is actually available against the full Phase 1+2 codebase, triage every finding with the user before fixing anything, and close out with the same one-piece-per-commit, documented-residual-vs-deferred-follow-up discipline as every other step.
@@ -346,7 +346,7 @@ This bug predates Step 3 — the race between the two steps' callbacks always ex
 
 **Tests:** backend **83** (was 75, +4 F5 injection tests, +4 F2 redirect tests, +3 F7 prompt-fencing tests, +1 ported live Petstore test via F1) · worker **50** (was 45, +byok/models/rateLimit coverage across F3/F6/F8/F9) · frontend **37** (unchanged — no frontend surface touched this step), `tsc --noEmit` + `next lint` clean.
 
-**Next:** Step 7 — final full retest, then push and deliver.
+**Next (at the time):** Step 7 — final full retest, then push and deliver.
 
 ### Session 11 — 2026-08-11 — Step 7 (final retest, README, deliver) CLOSED
 **Goal:** Close Phase 2 without reopening any of Steps 1–6's design decisions: one last hermetic retest, a genuine live browser smoke test through the deployed app, a consistency check across the accumulated documentation, and whatever "deliver" actually meant for this project — asked rather than assumed.
@@ -437,7 +437,7 @@ and the OpenAI-family adapter, and scope the target-API auth design before any c
 **Funded-OpenAI-probe residuals:** temperature omission, the synthetic 400 rule, and the unresolved
 families. See ARCHITECTURE.md Phase 3 (d).
 
-**Next piece:** Piece 4, generator fidelity. Honor `required` (`generate.py:179`), arrays/enums and
+**Next piece (at the time):** Piece 4, generator fidelity. Honor `required` (`generate.py:179`), arrays/enums and
 `explode: false` in `_py_type` (`generate.py:86`), and test on ~30 real specs.
 
 ### Session 12 addendum — 2026-10-19 — pieces 4a (recon) and 4b (generator hardening) (Claude Code)
@@ -488,7 +488,7 @@ ignoring datamodel-codegen's timestamp line.
 
 **Tests:** backend **168** · worker **52** · frontend **40**.
 
-**Next piece:** 4c, `params.py` (hermetic, not wired in). See TODO.md Phase 3 sprint.
+**Next piece (at the time):** 4c, `params.py` (hermetic, not wired in). See TODO.md Phase 3 sprint.
 
 ### Session 12 addendum 2 — 2026-10-19 — pieces 4c, 4d, 4e-i, 4e-ii (Claude Code)
 **4c — `params.py` (`8bf5160`), hermetic, not wired in.** Plans one operation's parameters:
@@ -565,6 +565,77 @@ non-JSON login did. Logged in TODO.md.
 
 **Tests:** backend **414** · worker **52** · frontend **43**.
 
-**Next piece:** 4f, the corpus. See TODO.md Phase 3 sprint.
+**Next piece (at the time):** 4f, the corpus. See TODO.md Phase 3 sprint.
+
+### Session 12 addendum 3 — 2026-10-19 — piece 4f, the corpus harness (Claude Code)
+**Source decision (owner, 2026-10-19).** The APIs.guru directory is reachable but stale: newest spec
+update 2023-04-21, and the repo's later commits are README-only. Owner's choice:
+- keep APIs.guru, selecting only entries whose `x-origin` is natively OpenAPI 3.x;
+- `url` is the pinned APIs.guru copy (sha256), and `origin_url` is provenance only, never fetched;
+- no widening of the selection to compensate;
+- specs are not redistributed (cache gitignored), and licences are recorded.
+
+**What 4f added (`26ed462`).**
+- `ci_runner.load_spec(url)` / `load_spec_text(text, url)` extracted from `run()`, behaviour-preserving
+  (all existing tests unmodified).
+- `scripts/corpus_select.py` → `backend/corpus/manifest.json`. Rules: native 3.x, 5-100 operations,
+  one per provider, sorted-id order, 30 picks, plus Open-Meteo and Petstore v3.
+  - 32 specs: 3.0.x 30, **3.1.x only 2** (Open-Meteo and `adyen.com:AccountService`).
+  - Sorted-id order means every APIs.guru pick is a provider starting with a digit, `a` or `b`.
+- `scripts/run_corpus.py` + `scripts/corpus_check.py`. Per spec, in a subprocess with a 180 s timeout:
+  sha256 check, `load_spec_text` with remote `$ref`s refused, generation, compile, the inert check,
+  then an execution check inside `relay-sandbox` (`--network none`, read-only, no capabilities,
+  pids/memory limits), one fresh interpreter per operation.
+- Results: `backend/corpus/RESULTS.md` / `RESULTS.json`.
+
+**Selection statistics (23 specs that loaded):** header params 4, array query params 7, path-item
+parameters 2, operation/path servers 2, non-JSON 2xx responses 11.
+
+**Results.**
+- 23 of 32 specs load. 587 operations in the loaded specs: 465 generated, 122 skipped (all
+  `no_json_response`).
+- Execution check: 344 ok, 53 skipped (required body), 61 failed, 7 not run (failed the inert check).
+- Only 1 lossy hint in the whole corpus (Open-Meteo `hourly`, 355 enum members); 0 ignored
+  parameters.
+
+**Gates:** G1 compile failures **PASS** (0) · G2 inert-check failures **FAIL** (7) · G3 generator_error
+skips **PASS** (0) · G4 execution-check failures **FAIL** (61) · G5 hash mismatch / timeouts **PASS** (0).
+
+**Findings (reported, not fixed):**
+1. **Generator bug: an optional request body crashes when omitted.** The template always emits
+   `json=body.model_dump(...)`, so `body=None` raises `AttributeError`. This affects 61 operations
+   in 7 specs (e.g. `swagger.io:petstore3` `POST /store/order`) and predates 4d.
+2. **Pipeline bug: recursive schemas are rejected.** prance's default `recursion_limit=1` raises
+   `ResolutionError` on legal recursive `$ref`s, so `run()` would report `spec_invalid`. 4 specs:
+   `api.video`, `apideck.com:accounting`, `bbci.co.uk`, `bigoven.com`.
+3. **Pipeline bug (dependency): a legal vendor extension inside `paths` crashes the validator.**
+   `x-codegen-contextRoot` in `paths` makes openapi-spec-validator/jsonschema-path raise
+   `KeyError`, which Relay reports as `internal_error` ("our end") rather than a spec problem. 1 spec:
+   `apicurio.local:registry`.
+4. **Harness/checker finding: the inert checker is stricter than legitimate datamodel-codegen
+   output.**
+   - `class X(RootModel[constr(...)])` puts a call in a class header: 5 operations in
+     `apis.guru` and `apple.com:sirikit-cloud-media`.
+   - `__annotations__ = {'__pydantic_extra__': ...}` (typed `additionalProperties`) is a dunder: 2
+     operations in `apple.com:sirikit-cloud-media`.
+
+   Those operations were never executed. Two fix directions: allow exactly these shapes, or make
+   the generator emit `Annotated` constraints instead. This needs deciding before the step 6
+   corrector-patch validator reuses the checker.
+5. **Spec defects, not Relay bugs:** 4 specs fail validation because a default doesn't match its
+   schema type (`'100'` for an integer, `True` for a string, `1` for a string, a string default for
+   an array): `ably.io:platform`, `apptigent.com`, `art19.com`, `bhagavadgita.io`.
+6. **Harness bug, fixed during 4f.** The first full run checked every operation in one interpreter.
+   bbc.com's 23 operations each import a ~319 KB `models.py` (each endpoint duplicates the whole
+   schema graph, which is known debt), and the container was killed after 18. The checker now runs
+   each operation in a fresh interpreter; bbc.com: 23/23 ok.
+7. **Observation:** `apisetu.gov.in:bajajallianz` and `bclaws.ca:bclaws` generate 0 operations (all
+   `no_json_response`); a production run would correctly end `no_operations_generated`.
+8. **Observation:** the host venv has pydantic 2.13.4, while the sandbox image and the Action host
+   have 2.14.1. RESULTS.md records both; this is covered by the existing pinning backlog item.
+
+**Tests:** backend **469** · worker **52** · frontend **43**.
+
+**Next piece (at the time):** 4g, the `call_failed` split; then piece 5.
 
 <!-- Copy the block above for each new session -->
