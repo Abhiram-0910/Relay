@@ -199,7 +199,10 @@ def generate_endpoint_client(spec: dict, path: str, method: str, tmp_dir: Path) 
     has = {loc: any(p.location == loc for p in op_params.params) for loc in ("query", "header")}
     params_kwarg_line = f"params=_relay_query_string({query_items})," if has["query"] else ""
     headers_kwarg_line = f"headers=_relay_header_dict({header_items})," if has["header"] else ""
-    json_kwarg_line = f"json=body.model_dump(mode='json', exclude_none=True)," if request_model else ""
+    dump = "body.model_dump(mode='json', exclude_none=True)"
+    # An omitted optional body sends no body at all (json=None: no payload, no Content-Type).
+    json_kwarg_line = ("" if not request_model else f"json={dump}," if body_required
+                       else f"json=None if body is None else {dump},")
     typing_import_line = (f"from typing import {', '.join(sorted(op_params.typing_imports))}\n"
                           if op_params.typing_imports else "")
     alias_lines = "".join(f"{name} = {literal}\n" for name, literal in op_params.aliases.items())

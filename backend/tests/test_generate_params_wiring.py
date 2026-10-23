@@ -3,6 +3,8 @@ would send (Session.send stubbed, no network)."""
 from __future__ import annotations
 
 import inspect
+import json
+import typing
 from pathlib import Path
 
 import pytest
@@ -116,3 +118,35 @@ def test_generation_is_byte_reproducible(tmp_path: Path) -> None:
     second = generate_endpoint_client(SPEC, "/things/{id}", "get", tmp_path / "b")
     assert "timestamp" not in first["models_code"]
     assert (first["models_code"], first["client_code"]) == (second["models_code"], second["client_code"])
+
+
+def _body_op(required: bool) -> dict:
+    return {"openapi": "3.0.3", "info": {"title": "Body", "version": "1"}, "paths": {"/orders": {"post": {
+        "operationId": "placeOrder", "responses": _OK,
+        "requestBody": {"required": required, "content": {"application/json": {"schema": {
+            "type": "object", "properties": {"qty": {"type": "integer"}}}}}}}}}}
+
+
+def test_optional_body_omitted_sends_no_body(tmp_path: Path) -> None:
+    item = generate_endpoint_client(_body_op(False), "/orders", "post", tmp_path)
+    assert_generated_source_inert(item["client_code"])
+    sent = capture(item, tmp_path)
+    assert sent.body is None and "Content-Type" not in sent.headers
+
+
+def test_optional_body_given_is_sent_as_json(tmp_path: Path) -> None:
+    item = generate_endpoint_client(_body_op(False), "/orders", "post", tmp_path)
+    body_model = typing.get_type_hints(getattr(load_client(item, tmp_path / "m"), item["method_name"]))["body"]
+    model = next(a for a in typing.get_args(body_model) if a is not type(None))
+    sent = capture(item, tmp_path, body=model(qty=2))
+    assert (json.loads(sent.body), sent.headers["Content-Type"]) == ({"qty": 2}, "application/json")
+
+
+def test_required_body_is_unchanged(tmp_path: Path) -> None:
+    item = generate_endpoint_client(_body_op(True), "/orders", "post", tmp_path)
+    method = getattr(load_client(item, tmp_path / "m"), item["method_name"])
+    [(name, param)] = inspect.signature(method).parameters.items()
+    assert (name, param.kind, param.default) == ("body", param.POSITIONAL_OR_KEYWORD, param.empty)
+    assert "json=body.model_dump(mode='json', exclude_none=True)," in item["client_code"]
+    sent = capture(item, tmp_path, typing.get_type_hints(method)["body"](qty=3))
+    assert (json.loads(sent.body), sent.headers["Content-Type"]) == ({"qty": 3}, "application/json")
