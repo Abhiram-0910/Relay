@@ -6,13 +6,13 @@ Claude reads this at the START of every new session to understand what happened 
 ---
 
 ## Project State
-**Last updated:** 2026-10-19 (Session 12) — **Phase 3 in progress**
+**Last updated:** 2026-10-23 (Session 12, addendum 4) — **Phase 3 in progress**
 **Current branch:** main
-**Overall status:** MVP is **complete and live-verified end-to-end, frontend included** (see Session 2 close, 2026-07-26). Vercel frontend (`https://relay-cyan-rho.vercel.app`) → Cloudflare Worker (`https://relay-worker.abhiram-dev.workers.dev`) → GitHub Actions → Docker sandbox → Gemini self-correction → KV, with per-IP rate limiting, run-id isolation, and a code viewer. A real browser run polls to `Succeeded` / `verified_pass` and shows the real generated client. Nothing in the MVP is claimed-but-unproven. Tests (as of Session 12): backend 469 · worker 52 · frontend 43 hermetic, all green.
+**Overall status:** MVP is **complete and live-verified end-to-end, frontend included** (see Session 2 close, 2026-07-26). Vercel frontend (`https://relay-cyan-rho.vercel.app`) → Cloudflare Worker (`https://relay-worker.abhiram-dev.workers.dev`) → GitHub Actions → Docker sandbox → Gemini self-correction → KV, with per-IP rate limiting, run-id isolation, and a code viewer. A real browser run polls to `Succeeded` / `verified_pass` and shows the real generated client. Nothing in the MVP is claimed-but-unproven. Tests (as of Session 12 addendum 4): backend 472 · worker 52 · frontend 43 hermetic, all green.
 
 **Phase 2 (scoped 2026-07-26, build starting Session 3, 2026-07-27):** BYOK security infrastructure → multi-provider LLM (Gemini/OpenAI/Anthropic/Grok/OpenRouter) → honest error taxonomy → full QA re-verification → visual/UX pass → `/security-review` + remediation → final retest and deliver. **Progress:** Step 1 (BYOK) CLOSED live (Session 4). Step 2 (multi-provider) CLOSED live (Session 6, commits `4866d2a`→`7f846fb`) — see Session 6 for the full receipt; one accepted gap logged there (corrector proven live independently of the deployed pipeline, not together in one run — no test-injection hook exists in the public API for that). Step 3 (honest error taxonomy) CLOSED (Session 7, commits `caf86cf`→`dc5e5cf`) — see Session 7 for the full receipt; one deliberate scope boundary logged there at the time (per-attempt corrector codes rendered as raw tokens in the compact attempts list), closed the next step (Step 4 gave `status.ts` labels to all 7 corrector codes). Step 4 (full QA pass) CLOSED (Session 8, commits `bbb35fd`→`572c18d`) — see Session 8 for the full receipt, including a real production bug (the Action's infra-failure watchdog silently overwriting every classified error) found live and fixed, not just a coverage-extension step. Step 5 (visual/UX pass) CLOSED (Session 9, commits `c21ca2a`→`8ce5b3d`) — see Session 9 for the full receipt and a logged pattern-to-watch (`status.ts` caught incomplete twice now). Step 6 (security review) CLOSED (Session 10, commits `03c8b2c`→`c09b7ee`) — see Session 10 for the full receipt, including a prominent standalone callout for F5 (the most severe finding in the project: RCE via generated code an end user downloads and trusts) and an explicit note that the scan's own adversarial verification panel never completed, substituted with an independent manual trace. **Step 7 (final retest, README, deliver) CLOSED (Session 11, commits `19b2a31`→`9e28f98`)** — see Session 11 for the full receipt, including a full residuals audit across Sessions 1–10 and two accumulated documentation inconsistencies caught and fixed. **Phase 2 is now fully closed** — every step has its own live receipt, nothing claimed-but-unproven remains.
 
-**Phase 3 (scoped 2026-10-19, in progress):** verified-live generation with per-operation receipts → generator fidelity → general param synthesis → target-API auth → receipt schema + MCP output. Design: ARCHITECTURE.md "Phase 3 — verified-live USP and target auth". Checklist: TODO.md Phase 3 sprint. **Progress:** pieces 0, 1, 2 (+2b, 2c), 3a, 3b, 3c, 4b, 4c, 4d, 4e-i, 4e-ii and 4f are done (`e1ba802`→`26ed462`, see Session 12 and its addenda). **Next piece:** 4g (`call_failed` split), then piece 5 (general param synthesis). Open live-receipt gaps: OpenAI billing is inactive on the project's OpenAI key, so 3a and the 400 json_schema rule are hermetic-only.
+**Phase 3 (scoped 2026-10-19, in progress):** verified-live generation with per-operation receipts → generator fidelity → general param synthesis → target-API auth → receipt schema + MCP output. Design: ARCHITECTURE.md "Phase 3 — verified-live USP and target auth". Checklist: TODO.md Phase 3 sprint. **Progress:** pieces 0, 1, 2 (+2b, 2c), 3a, 3b, 3c, 4b, 4c, 4d, 4e-i, 4e-ii, 4f and 4h are done (`e1ba802`→`9c60097`, see Session 12 and its addenda). **Next piece:** 4g (`call_failed` split), then piece 5 (general param synthesis). Open live-receipt gaps: OpenAI billing is inactive on the project's OpenAI key, so 3a and the 400 json_schema rule are hermetic-only.
 
 ---
 
@@ -635,6 +635,83 @@ skips **PASS** (0) · G4 execution-check failures **FAIL** (61) · G5 hash misma
    have 2.14.1. RESULTS.md records both; this is covered by the existing pinning backlog item.
 
 **Tests:** backend **469** · worker **52** · frontend **43**.
+
+**Next piece (at the time):** 4g, the `call_failed` split; then piece 5.
+
+### Session 12 addendum 4 — 2026-10-23 — piece 4h, optional-body fix and corpus follow-ups (Claude Code)
+**Fixed (`9c60097`).** An omitted optional request body crashed the generated method
+(`json=body.model_dump(...)` on `None`). `generate.py:202-205` now renders
+`json=None if body is None else body.model_dump(...)` for optional bodies only. With `json=None`,
+requests sends no body and no Content-Type. Required bodies render byte-identically to before. Three
+behavioural tests in `test_generate_params_wiring.py` cover them: optional omitted → no body and no
+Content-Type, optional given → JSON body, required unchanged. Mutation check: with `generate.py`
+reverted, the omitted test fails with the exact corpus `AttributeError`.
+
+**Step 0 findings (read-only, against the cached corpus and the resolved specs the generator sees):**
+- **0a: the 122 `no_json_response` skips.**
+  - (i) No response content: 101. Of these, 60 have a 2xx with no `content`; 41 declare no 2xx at
+    all (39 `default`-only, 1 `404`/`405`, 1 `301`). 8 of the `default`-only operations
+    (`adobe.com:aem`) carry an `application/json` schema there.
+  - (ii) Only non-JSON media types: 19. `application/pdf` 7, `text/plain` 5, and 1 each of
+    `application/octet-stream`, `application/jwt`, `application/jose`, `plain/text` (a spec typo),
+    `text/xml`, `image/png`, `text/csv`.
+  - (iii) JSON-ish but not exactly `application/json`: 2, both `*/*` in `apigee.local:registry`.
+    Neither has a schema, so accepting JSON-ish types would generate 0 extra operations in this
+    corpus. The exact-match rule is a latent gap only; no corpus spec uses `; charset=`,
+    `+json` or `problem+json` on a success response.
+  - (iv) `application/json` with no schema: 0.
+  - Per spec: `adobe.com:aem` (i)40 (ii)5 · `appwrite.io:client` (i)18 · `apache.org` (i)7 ·
+    `bclaws.ca:bclaws` (i)7 · `apisetu.gov.in:bajajallianz` (ii)7 · `api.ebay.com:sell-account` (i)6 ·
+    `ably.net:control` (i)5 · `swagger.io:petstore3` (i)5 · `apigee.local:registry` (i)5 (iii)2 ·
+    `1password.local:connect` (i)1 (ii)3 · `6-dot-authentiqio.appspot.com` (i)2 (ii)1 ·
+    `apispot.io:whois` (i)2 · `bbc.com` (i)2 · `apigee.net:marketcheck-cars` (i)1 (ii)1 ·
+    `api2pdf.com` (ii)1 · `apple.com:sirikit-cloud-media` (ii)1.
+- **0b: recursion is not distinguishable, so no new error code.**
+  - `bigoven.com`, `api.video`, `apideck.com:accounting` and `bbci.co.uk` all raise a bare
+    `prance.util.url.ResolutionError` (MRO `ResolutionError → LookupError`). It has no attributes
+    (`vars()` empty), one arg and no `__cause__`.
+  - An unresolvable internal `$ref` raises the same class with the same shape. It differs only in
+    Python's implicit `__context__` (`KeyError`), which prance does not set deliberately.
+  - Relay's own fetch-failure `ResolutionError` (`ci_runner.py:106`) has no context either.
+  - So only the message text separates recursion from a real `spec_invalid`. Per the piece's rule,
+    no `unsupported_spec_construct` code was added.
+  - prance 26.7.19.0 takes `recursion_limit` (default 1) and `recursion_limit_handler` (default
+    `default_reclimit_handler`, which raises). It also ships `keep_ref_on_recursion` and
+    `permissive_object_on_recursion`.
+  - With `keep_ref_on_recursion`, the resolved dict keeps `{"$ref": "#/components/schemas/Node"}`
+    inside the inlined schema. datamodel-codegen given that fragment emits a `DanglingRefWarning`
+    and generates `class Node(RootModel[Any])`, a silent loss of the recursive type.
+  - Upgrade path for classification: pass a handler that raises a Relay-owned
+    `ResolutionError` subclass, then key the code off that type.
+- **0c: no lossy undercount.**
+  - An independent counter over the raw specs (own `$ref` resolution, own 4c rules) was compared
+    with `plan_parameters`, the `generate_endpoint_client` entry and RESULTS.json for every loaded
+    spec. They agree everywhere.
+  - Spot-check specs: `apache.org` (16 array query params, string items), `bbc.com` (94, 27 with
+    enum items of ≤50 same-typed members) and `amentum.space:aviation_radiation` (6, number items).
+    Expected lossy 0 = harness 0 for all three.
+  - The corpus has no untyped, composed, items-less or `allowReserved` parameters. Only
+    `enum_not_literal` is exercised by real specs; the other lossy codes have hermetic tests only.
+- **0d: crash site.** `generate.py:202` (rendered at the template's `{{ json_kwarg_line }}`, line
+  109); the signature is `params.py:335`, `body: X | None = None`. 61 executed operations in 7
+  specs: `adyen.com:AccountService` 20, `appwrite.io:client` 19, `ably.net:control` 9,
+  `api2pdf.com` 6, `swagger.io:petstore3` 3, `1password.local:connect` 3, `apache.org` 1.
+
+**Corpus re-run** at `9c60097` (clean tree for `backend/app` and `scripts`; `relay-sandbox`
+rebuilt first, Docker 29.8.2 / Docker Desktop 4.95.0). The full run took 4m50s and did not hang.
+- Exec ok 344 → **405** (+61), failed 61 → **0**. 53 skipped (required body) and 7 not run
+  (inert check), both unchanged.
+- Gates before → after: G1 0 → 0 · **G2 7 → 7** (known, deferred) · G3 0 → 0 · **G4 61 → 0** ·
+  G5 0 → 0. No new findings.
+- An earlier attempt in this session ran while Docker Desktop was stopped. The image build failed
+  and every check came back `NoCheckerResult` (G4 458). Its RESULTS output was discarded with
+  `git checkout`, never committed.
+
+**Not changed (findings only):** the 0a categories, the apicurio `x-` key crash, the inert-checker
+decision and the 4 spec-defect specs. TODO.md has the backlog items.
+
+**Tests:** backend **472** (was 469) · worker **52** · frontend **43**. `tsc` and `next lint` are
+clean. No backend linter is installed.
 
 **Next piece (at the time):** 4g, the `call_failed` split; then piece 5.
 

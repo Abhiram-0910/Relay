@@ -1,15 +1,10 @@
 {
   "meta": {
     "git": {
-      "sha": "c6f709926470627dd6a48a79a5fc0b77f439f1e4",
-      "uncommitted": [
-        "backend/app/ci_runner.py",
-        "scripts/corpus_check.py",
-        "scripts/corpus_select.py",
-        "scripts/run_corpus.py"
-      ]
+      "sha": "9c6009759139c21ee42bd829445f2d6b442fcf04",
+      "uncommitted": []
     },
-    "date": "2026-10-19 20:15Z",
+    "date": "2026-10-23 15:14Z",
     "versions": {
       "venv": {
         "python": "3.14.4",
@@ -41,7 +36,7 @@
     ],
     [
       "G4 zero execution-check failures",
-      61
+      0
     ],
     [
       "G5 zero hash_mismatch and zero timeouts",
@@ -73,7 +68,7 @@
         "operation_or_path_servers": true,
         "non_json_responses": false
       },
-      "seconds": 2.0
+      "seconds": 2.5
     },
     {
       "id": "swagger.io:petstore3",
@@ -89,25 +84,9 @@
       "ignored": {},
       "compile_failures": [],
       "inert_failures": [],
-      "exec_ok": 9,
+      "exec_ok": 12,
       "exec_skipped_required_body": 2,
-      "exec_failures": [
-        {
-          "op": "POST /store/order",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "POST /user",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "POST /user/createWithList",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        }
-      ],
+      "exec_failures": [],
       "features": {
         "header_params": true,
         "array_query_params": true,
@@ -115,7 +94,7 @@
         "operation_or_path_servers": false,
         "non_json_responses": true
       },
-      "seconds": 3.1
+      "seconds": 3.2
     },
     {
       "id": "1password.local:connect",
@@ -131,25 +110,9 @@
       "ignored": {},
       "compile_failures": [],
       "inert_failures": [],
-      "exec_ok": 8,
+      "exec_ok": 11,
       "exec_skipped_required_body": 0,
-      "exec_failures": [
-        {
-          "op": "POST /vaults/{vaultUuid}/items",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "PATCH /vaults/{vaultUuid}/items/{itemUuid}",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "PUT /vaults/{vaultUuid}/items/{itemUuid}",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        }
-      ],
+      "exec_failures": [],
       "features": {
         "header_params": false,
         "array_query_params": false,
@@ -218,55 +181,9 @@
       "ignored": {},
       "compile_failures": [],
       "inert_failures": [],
-      "exec_ok": 8,
+      "exec_ok": 17,
       "exec_skipped_required_body": 0,
-      "exec_failures": [
-        {
-          "op": "POST /accounts/{account_id}/apps",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "POST /apps/{app_id}/keys",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "PATCH /apps/{app_id}/keys/{key_id}",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "POST /apps/{app_id}/namespaces",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "PATCH /apps/{app_id}/namespaces/{namespace_id}",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "POST /apps/{app_id}/queues",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "POST /apps/{app_id}/rules",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "PATCH /apps/{app_id}/rules/{rule_id}",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "PATCH /apps/{id}",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        }
-      ],
+      "exec_failures": [],
       "features": {
         "header_params": false,
         "array_query_params": false,
@@ -274,7 +191,7 @@
         "operation_or_path_servers": false,
         "non_json_responses": false
       },
-      "seconds": 6.2
+      "seconds": 6.3
     },
     {
       "id": "adobe.com:aem",
@@ -314,110 +231,9 @@
       "ignored": {},
       "compile_failures": [],
       "inert_failures": [],
-      "exec_ok": 0,
+      "exec_ok": 20,
       "exec_skipped_required_body": 0,
-      "exec_failures": [
-        {
-          "op": "POST /checkAccountHolder",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "POST /closeAccount",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "POST /closeAccountHolder",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "POST /closeStores",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "POST /createAccount",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "POST /createAccountHolder",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "POST /deleteBankAccounts",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "POST /deleteLegalArrangements",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "POST /deletePayoutMethods",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "POST /deleteShareholders",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "POST /deleteSignatories",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "POST /getAccountHolder",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "POST /getTaxForm",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "POST /getUploadedDocuments",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "POST /suspendAccountHolder",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "POST /unSuspendAccountHolder",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "POST /updateAccount",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "POST /updateAccountHolder",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "POST /updateAccountHolderState",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "POST /uploadDocument",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        }
-      ],
+      "exec_failures": [],
       "features": {
         "header_params": false,
         "array_query_params": false,
@@ -425,7 +241,7 @@
         "operation_or_path_servers": false,
         "non_json_responses": false
       },
-      "seconds": 10.5
+      "seconds": 10.2
     },
     {
       "id": "amentum.space:aviation_radiation",
@@ -465,15 +281,9 @@
       "ignored": {},
       "compile_failures": [],
       "inert_failures": [],
-      "exec_ok": 41,
+      "exec_ok": 42,
       "exec_skipped_required_body": 24,
-      "exec_failures": [
-        {
-          "op": "PATCH /dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}/{map_index}",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        }
-      ],
+      "exec_failures": [],
       "features": {
         "header_params": false,
         "array_query_params": true,
@@ -481,7 +291,7 @@
         "operation_or_path_servers": false,
         "non_json_responses": true
       },
-      "seconds": 12.8
+      "seconds": 13.9
     },
     {
       "id": "api.ebay.com:sell-account",
@@ -507,7 +317,7 @@
         "operation_or_path_servers": false,
         "non_json_responses": false
       },
-      "seconds": 6.8
+      "seconds": 8.0
     },
     {
       "id": "api.video",
@@ -526,7 +336,7 @@
       "exec_failures": [],
       "features": {},
       "load_error": "ResolutionError",
-      "seconds": 0.2
+      "seconds": 0.3
     },
     {
       "id": "api2pdf.com",
@@ -542,40 +352,9 @@
       "ignored": {},
       "compile_failures": [],
       "inert_failures": [],
-      "exec_ok": 2,
+      "exec_ok": 8,
       "exec_skipped_required_body": 0,
-      "exec_failures": [
-        {
-          "op": "POST /chrome/html",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "POST /chrome/url",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "POST /libreoffice/convert",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "POST /merge",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "POST /wkhtmltopdf/html",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "POST /wkhtmltopdf/url",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        }
-      ],
+      "exec_failures": [],
       "features": {
         "header_params": false,
         "array_query_params": false,
@@ -583,7 +362,7 @@
         "operation_or_path_servers": false,
         "non_json_responses": true
       },
-      "seconds": 1.9
+      "seconds": 2.1
     },
     {
       "id": "apicurio.local:registry",
@@ -626,7 +405,7 @@
         "operation_or_path_servers": false,
         "non_json_responses": false
       },
-      "seconds": 8.7
+      "seconds": 9.4
     },
     {
       "id": "apideck.com:accounting",
@@ -671,7 +450,7 @@
         "operation_or_path_servers": false,
         "non_json_responses": true
       },
-      "seconds": 5.5
+      "seconds": 6.3
     },
     {
       "id": "apigee.net:marketcheck-cars",
@@ -697,7 +476,7 @@
         "operation_or_path_servers": false,
         "non_json_responses": true
       },
-      "seconds": 19.1
+      "seconds": 19.7
     },
     {
       "id": "apis.guru",
@@ -732,7 +511,7 @@
         "operation_or_path_servers": false,
         "non_json_responses": false
       },
-      "seconds": 1.5
+      "seconds": 1.6
     },
     {
       "id": "apisetu.gov.in:bajajallianz",
@@ -784,7 +563,7 @@
         "operation_or_path_servers": false,
         "non_json_responses": false
       },
-      "seconds": 1.5
+      "seconds": 1.7
     },
     {
       "id": "apiz.ebay.com:sell-finances",
@@ -879,7 +658,7 @@
       "exec_failures": [],
       "features": {},
       "load_error": "ValidationError",
-      "seconds": 0.3
+      "seconds": 0.4
     },
     {
       "id": "appwrite.io:client",
@@ -895,105 +674,9 @@
       "ignored": {},
       "compile_failures": [],
       "inert_failures": [],
-      "exec_ok": 24,
+      "exec_ok": 43,
       "exec_skipped_required_body": 0,
-      "exec_failures": [
-        {
-          "op": "POST /account",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "PATCH /account/email",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "PATCH /account/name",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "PATCH /account/password",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "PATCH /account/prefs",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "POST /account/recovery",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "PUT /account/recovery",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "POST /account/sessions",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "POST /account/verification",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "PUT /account/verification",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "POST /database/collections/{collectionId}/documents",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "PATCH /database/collections/{collectionId}/documents/{documentId}",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "POST /functions/{functionId}/executions",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "PUT /storage/files/{fileId}",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "POST /teams",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "PUT /teams/{teamId}",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "POST /teams/{teamId}/memberships",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "PATCH /teams/{teamId}/memberships/{membershipId}",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        },
-        {
-          "op": "PATCH /teams/{teamId}/memberships/{membershipId}/status",
-          "error": "AttributeError",
-          "detail": "\"'NoneType' object has no attribute 'model_dump'\""
-        }
-      ],
+      "exec_failures": [],
       "features": {
         "header_params": false,
         "array_query_params": true,
@@ -1001,7 +684,7 @@
         "operation_or_path_servers": false,
         "non_json_responses": false
       },
-      "seconds": 7.8
+      "seconds": 8.7
     },
     {
       "id": "art19.com",
@@ -1044,7 +727,7 @@
         "operation_or_path_servers": false,
         "non_json_responses": false
       },
-      "seconds": 6.4
+      "seconds": 6.9
     },
     {
       "id": "bbc.com",
@@ -1070,7 +753,7 @@
         "operation_or_path_servers": false,
         "non_json_responses": true
       },
-      "seconds": 156.8
+      "seconds": 162.4
     },
     {
       "id": "bbci.co.uk",
