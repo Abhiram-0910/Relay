@@ -12,7 +12,8 @@ pinned socat sidecar) — no exceptions, since the patched code is untrusted.
 The corrector reads the sandbox report's structured status to know what to fix:
   - verified_live_validation_failed → the HTTP call worked but the response model rejected the
     real response → patch models.py.
-  - call_failed → the request itself failed → patch client.py.
+  - call_failed → the request itself failed (HTTP 400/422 or a client-side exception) → patch
+    client.py. Statuses in UNFIXABLE_STATUSES never reach a corrector.
 """
 from __future__ import annotations
 
@@ -23,7 +24,8 @@ from typing import Callable
 
 import requests
 
-from app.sandbox import STATUS_PASS, STATUS_SSRF_BLOCKED, STATUS_TIMEOUT, run_in_sandbox
+from app.sandbox import (STATUS_NON_JSON_RESPONSE, STATUS_PASS, STATUS_SSRF_BLOCKED, STATUS_TARGET_HTTP_ERROR,
+                         STATUS_TARGET_UNREACHABLE, STATUS_TIMEOUT, run_in_sandbox)
 
 # Model IDs kept as constants so swapping is one line. gemini-2.5-flash was retired for new API
 # keys ("no longer available to new users"), so Flash is pinned to the current stable 3.x line;
@@ -434,7 +436,11 @@ def _ladder_for(model: str | None) -> tuple[str, ...]:
 #   generated clients don't have their own retry/backoff loops; revisit if that ever changes.
 # - ssrf_blocked: the pre-flight refused the target host. The corrector can only patch the client,
 #   never the base URL, so no patch changes the outcome.
-UNFIXABLE_STATUSES = frozenset({STATUS_TIMEOUT, STATUS_SSRF_BLOCKED})
+# - target_unreachable / target_http_error / non_json_response (4g): a connection failure, a non-2xx
+#   other than 400/422, or a non-JSON body where the spec promised JSON. Findings about the target or
+#   the spec; 400/422 and client-side exceptions stay call_failed and still enter the ladder.
+UNFIXABLE_STATUSES = frozenset({STATUS_TIMEOUT, STATUS_SSRF_BLOCKED, STATUS_TARGET_UNREACHABLE,
+                                STATUS_TARGET_HTTP_ERROR, STATUS_NON_JSON_RESPONSE})
 
 
 def self_correct(

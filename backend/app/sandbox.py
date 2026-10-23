@@ -49,9 +49,15 @@ STATUS_VALIDATION_FAILED = "verified_live_validation_failed"
 STATUS_CALL_FAILED = "call_failed"
 STATUS_SSRF_BLOCKED = "ssrf_blocked"
 # HOST-level wall-clock kill only (the whole container ran past `timeout` and was force-killed) —
-# distinct from an in-container request-level timeout, which runner.py still reports as
-# STATUS_CALL_FAILED (requests.Timeout is a requests.RequestException there; out of scope here).
+# distinct from an in-container request-level timeout, which is STATUS_TARGET_UNREACHABLE.
 STATUS_TIMEOUT = "sandbox_timeout"
+# call_failed refined by the runner's failure_kind (classify_call_failure). These three are findings
+# about the target or the spec, not something a client patch can fix (correct.UNFIXABLE_STATUSES).
+STATUS_TARGET_UNREACHABLE = "target_unreachable"
+STATUS_TARGET_HTTP_ERROR = "target_http_error"
+STATUS_NON_JSON_RESPONSE = "non_json_response"
+# HTTP statuses that usually mean OUR request was wrong (bad params/body): left as call_failed.
+_LADDER_HTTP_STATUSES = frozenset({400, 422})
 # Statuses where a real HTTP call actually completed against the live target.
 _VERIFIED_LIVE = {STATUS_PASS, STATUS_VALIDATION_FAILED}
 
@@ -153,15 +159,33 @@ def _wait_sidecar_ready(name: str, timeout: float = SIDECAR_READY_TIMEOUT) -> No
     raise SandboxError(f"sidecar {name} did not start listening within {timeout}s")
 
 
+def classify_call_failure(status: str, failure_kind: str | None, http_status: int | None) -> str:
+    """The final status for a runner result. Only call_failed is refined; an unknown or missing
+    failure_kind stays call_failed (ladder-eligible), never silently unfixable."""
+    if status != STATUS_CALL_FAILED:
+        return status
+    if failure_kind in ("connection", "timeout"):
+        return STATUS_TARGET_UNREACHABLE
+    if failure_kind in ("non_json", "decode"):
+        return STATUS_NON_JSON_RESPONSE
+    if (failure_kind == "http_status" and type(http_status) is int
+            and not 200 <= http_status < 300 and http_status not in _LADDER_HTTP_STATUSES):
+        return STATUS_TARGET_HTTP_ERROR
+    return STATUS_CALL_FAILED
+
+
 def _report(status: str, detail: str, *, endpoint: dict | None, resolved_ip: str | None,
-            http_status: int | None = None) -> dict:
+            http_status: int | None = None, failure_kind: str | None = None,
+            exception: str | None = None) -> dict:
     """Build the honest per-run report. `passed` is true ONLY for a verified, validated call."""
     return {
         "endpoint": endpoint,
-        "status": status,
+        "status": classify_call_failure(status, failure_kind, http_status),
         "passed": status == STATUS_PASS,
         "verified_live": status in _VERIFIED_LIVE,
         "http_status": http_status,
+        "failure_kind": failure_kind,
+        "exception": exception,
         "detail": detail,
         "resolved_ip": resolved_ip,
     }
@@ -260,10 +284,9 @@ def run_in_sandbox(
 
     result = _parse_runner_output(proc.stdout)
     if result is None:
-        detail = (proc.stderr or proc.stdout or "no output").strip()[:2000]
+        # The exit code only: container output can carry target data (a traceback's messages).
         return _report(
-            STATUS_CALL_FAILED,
-            f"no result from runner (exit {proc.returncode}): {detail}",
+            STATUS_CALL_FAILED, f"no result from runner (exit {proc.returncode})",
             endpoint=endpoint, resolved_ip=resolved_ip,
         )
 
@@ -271,4 +294,5 @@ def run_in_sandbox(
         result["status"], result["detail"],
         endpoint=endpoint, resolved_ip=resolved_ip,
         http_status=result.get("http_status"),
+        failure_kind=result.get("failure_kind"), exception=result.get("exception"),
     )

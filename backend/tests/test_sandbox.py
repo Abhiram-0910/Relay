@@ -175,3 +175,124 @@ def test_hardcoded_other_public_ip_is_unreachable(tmp_path: Path) -> None:
 
     assert report["status"] == sandbox.STATUS_CALL_FAILED, report
     assert not report["verified_live"], report
+
+
+# --- 4g: call_failed split (pure mapping + the real runner in-process) ---------------------------
+
+_STATUSES = (399, 400, 401, 404, 418, 422, 429, 500, 503, 599, None)
+
+
+def _expected(kind, http_status) -> str:
+    if kind in ("connection", "timeout"):
+        return sandbox.STATUS_TARGET_UNREACHABLE
+    if kind in ("non_json", "decode"):
+        return sandbox.STATUS_NON_JSON_RESPONSE
+    if kind == "http_status" and http_status is not None and http_status not in (400, 422):
+        return sandbox.STATUS_TARGET_HTTP_ERROR
+    return sandbox.STATUS_CALL_FAILED  # 400/422, client_exception, missing status, unknown/missing kind
+
+
+@pytest.mark.parametrize("http_status", _STATUSES)
+@pytest.mark.parametrize("kind", ["http_status", "connection", "timeout", "non_json", "decode",
+                                  "client_exception", "something_new", None])
+def test_call_failure_mapping_is_exhaustive(kind, http_status) -> None:
+    assert sandbox.classify_call_failure(sandbox.STATUS_CALL_FAILED, kind, http_status) == _expected(kind, http_status)
+
+
+def test_call_failure_mapping_spot_values() -> None:
+    m = sandbox.classify_call_failure
+    assert m("call_failed", "http_status", 500) == "target_http_error"
+    assert m("call_failed", "http_status", 422) == "call_failed"
+    assert m("call_failed", "http_status", True) == "call_failed"  # a bool is not a status code
+    for status in ("verified_pass", "verified_live_validation_failed", "sandbox_timeout", "ssrf_blocked"):
+        assert m(status, "connection", 500) == status  # only call_failed is ever refined
+
+
+CANARY = "CANARY-7f3a-target-data"
+
+
+def _load_runner():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("relay_sandbox_runner", sandbox.RUNNER_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _transport(status=None, content_type="application/json", raises=None):
+    import requests
+
+    def send(self, request, **_kw):
+        if raises is not None:
+            raise raises(f"{CANARY} {request.url}")
+        resp = requests.Response()
+        resp.status_code, resp.reason, resp.url, resp.request = status, f"{CANARY} reason", request.url, request
+        resp.headers["Content-Type"] = content_type
+        resp.headers["X-Leak"] = CANARY
+        resp._content = f'{{"oops": "{CANARY}"'.encode() if "json" in content_type else CANARY.encode()
+        return resp
+    return send
+
+
+def _runner_cases():
+    import requests
+    return [
+        ("http_500", _transport(500), "http_status", 500, "target_http_error"),
+        ("http_400", _transport(400), "http_status", 400, "call_failed"),
+        ("non_json", _transport(200, "text/plain"), "non_json", None, "non_json_response"),
+        ("decode", _transport(200, "application/json"), "decode", None, "non_json_response"),
+        ("connection", _transport(raises=requests.ConnectionError), "connection", None, "target_unreachable"),
+        ("timeout", _transport(raises=requests.ReadTimeout), "timeout", None, "target_unreachable"),
+        ("client_exception", _transport(raises=TypeError), "client_exception", None, "call_failed"),
+    ]
+
+
+@pytest.mark.parametrize("case", _runner_cases(), ids=lambda c: c[0])
+def test_runner_reports_structure_only_never_target_data(case, tmp_path: Path, monkeypatch, capsys) -> None:
+    """The REAL runner.main(), in-process, with Session.send stubbed: the response body, reason
+    phrase, a header and the exception message all carry CANARY, and none of it may reach the
+    runner's printed report or the host report built from it."""
+    import json
+    import sys
+
+    import requests
+
+    from app.generate import generate_endpoint_client
+
+    _, send, kind, http_status, final_status = case
+    spec = {"openapi": "3.0.3", "info": {"title": "T", "version": "1"}, "paths": {"/x": {"get": {
+        "operationId": "getX", "responses": {"200": {"description": "ok", "content": {
+            "application/json": {"schema": {"type": "object", "properties": {"a": {"type": "string"}}}}}}}}}}}
+    item = generate_endpoint_client(spec, "/x", "get", tmp_path / "work")
+    pkg = tmp_path / "root" / "client_pkg"
+    pkg.mkdir(parents=True)
+    for name, code in (("__init__.py", ""), ("models.py", item["models_code"]), ("client.py", item["client_code"])):
+        (pkg / name).write_text(code)
+    call_spec = tmp_path / "call_spec.json"
+    call_spec.write_text(json.dumps({"module": "client", "class_name": item["class_name"],
+                                     "method": item["method_name"], "base_url": "https://api.example.test"}))
+
+    runner = _load_runner()
+    monkeypatch.setattr(runner, "CALL_SPEC_PATH", str(call_spec))
+    monkeypatch.setattr(runner, "CLIENT_PKG_ROOT", str(pkg.parent))
+    monkeypatch.setattr(requests.sessions.Session, "send", send)
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    for mod in [m for m in sys.modules if m == "client_pkg" or m.startswith("client_pkg.")]:
+        monkeypatch.delitem(sys.modules, mod)
+    original_json = requests.models.Response.json
+    try:
+        runner.main()
+    finally:
+        for mod in [m for m in sys.modules if m == "client_pkg" or m.startswith("client_pkg.")]:
+            del sys.modules[mod]
+    assert requests.models.Response.json is original_json  # the runner restores its wrapper
+
+    printed = capsys.readouterr()
+    result = sandbox._parse_runner_output(printed.out)
+    report = sandbox._report(result["status"], result["detail"], endpoint=None, resolved_ip=None,
+                             http_status=result.get("http_status"), failure_kind=result.get("failure_kind"),
+                             exception=result.get("exception"))
+    assert (result["failure_kind"], result["http_status"], report["status"]) == (kind, http_status, final_status)
+    assert CANARY not in printed.out + printed.err
+    assert CANARY not in json.dumps(report)
+    assert not [k for k in {*result, *report} if any(w in k for w in ("body", "text", "content", "message"))]

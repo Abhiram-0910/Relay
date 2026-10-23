@@ -1,6 +1,6 @@
 import { StatusBadge } from "@/components/StatusBadge";
 import { suggestsByok } from "@/lib/errors";
-import { skippedSummary } from "@/lib/report";
+import { httpStatusNote, skippedSummary } from "@/lib/report";
 import { labelOf, styleOf, toneOf } from "@/lib/status";
 import type { RunResult, ValidatedEndpoint } from "@/lib/types";
 
@@ -18,7 +18,10 @@ function EndpointRow({ v }: { v: ValidatedEndpoint }) {
           <span className="text-muted">{v.endpoint.method}</span>{" "}
           <span className="text-foreground">{v.endpoint.path}</span>
         </code>
-        <StatusBadge status={v.status} />
+        <span className="flex items-center gap-2">
+          {httpStatusNote(v) && <span className="font-mono text-xs text-muted">{httpStatusNote(v)}</span>}
+          <StatusBadge status={v.status} />
+        </span>
       </div>
       {v.reason && <p className="mt-2 text-xs text-muted">{v.reason}</p>}
       {attempts.length > 0 && (

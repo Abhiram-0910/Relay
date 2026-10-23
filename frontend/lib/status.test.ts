@@ -33,6 +33,12 @@ describe("status → tone SSOT", () => {
     }
   });
 
+  it("4g target/spec findings are warn (not Relay failures) with their own labels", () => {
+    expect([toneOf("target_unreachable"), labelOf("target_unreachable")]).toEqual(["warn", "Target unreachable"]);
+    expect([toneOf("target_http_error"), labelOf("target_http_error")]).toEqual(["warn", "Target API error"]);
+    expect([toneOf("non_json_response"), labelOf("non_json_response")]).toEqual(["warn", "Non-JSON response"]);
+  });
+
   it("model_unsupported is danger with its own label", () => {
     expect(toneOf("model_unsupported")).toBe("danger");
     expect(labelOf("model_unsupported")).toBe("Model unsupported");

@@ -198,7 +198,47 @@ def test_skips_corrector_entirely_on_timeout(tmp_path: Path) -> None:
 
 
 def test_unfixable_statuses_are_one_named_set() -> None:
-    assert correct.UNFIXABLE_STATUSES == {sandbox.STATUS_TIMEOUT, sandbox.STATUS_SSRF_BLOCKED}
+    assert correct.UNFIXABLE_STATUSES == {
+        sandbox.STATUS_TIMEOUT, sandbox.STATUS_SSRF_BLOCKED, sandbox.STATUS_TARGET_UNREACHABLE,
+        sandbox.STATUS_TARGET_HTTP_ERROR, sandbox.STATUS_NON_JSON_RESPONSE}
+
+
+# --- 4g: call_failed split. Findings about the target or spec never reach a corrector ----------
+
+@pytest.mark.parametrize("report", [
+    {"status": sandbox.STATUS_TARGET_UNREACHABLE, "failure_kind": "connection", "http_status": None},
+    {"status": sandbox.STATUS_TARGET_UNREACHABLE, "failure_kind": "timeout", "http_status": None},
+    {"status": sandbox.STATUS_TARGET_HTTP_ERROR, "failure_kind": "http_status", "http_status": 503},
+    {"status": sandbox.STATUS_NON_JSON_RESPONSE, "failure_kind": "non_json", "http_status": None},
+], ids=lambda r: f"{r['status']}-{r['failure_kind']}")
+def test_target_findings_return_without_calling_the_corrector(report: dict, tmp_path: Path) -> None:
+    calls = []
+    result = self_correct(_make_pkg(tmp_path), {"base_url": OPEN_METEO_BASE_URL}, report,
+                          run_sandbox=lambda *a, **k: calls.append("sandbox"),
+                          corrector=lambda *a, **k: calls.append("corrector"))
+    assert (calls, result.attempts, result.succeeded) == ([], [], False)
+    assert result.final_report["status"] == report["status"]
+    assert result.final_report["http_status"] == report["http_status"]  # 503 carried for target_http_error
+
+
+@pytest.mark.parametrize("report", [
+    {"status": sandbox.STATUS_CALL_FAILED, "failure_kind": "http_status", "http_status": 400},
+    {"status": sandbox.STATUS_CALL_FAILED, "failure_kind": "http_status", "http_status": 422},
+    {"status": sandbox.STATUS_CALL_FAILED, "failure_kind": "client_exception", "http_status": None},
+    {"status": sandbox.STATUS_CALL_FAILED, "failure_kind": "something_new", "http_status": None},
+    {"status": sandbox.STATUS_CALL_FAILED},
+], ids=["400", "422", "client_exception", "unknown_kind", "no_kind"])
+def test_fixable_call_failures_still_enter_the_ladder(report: dict, tmp_path: Path) -> None:
+    calls = []
+
+    def corrector(model_id, call_spec, report, models_code, client_code):
+        calls.append(model_id)
+        return {"models_py": models_code, "client_py": "# patched\n"}
+
+    result = self_correct(_make_pkg(tmp_path), {"base_url": OPEN_METEO_BASE_URL}, report,
+                          run_sandbox=lambda *a, **k: _report(sandbox.STATUS_PASS), corrector=corrector,
+                          ladder=("m1", "m2"))
+    assert calls == ["m1"] and result.succeeded
 
 
 def test_ssrf_blocked_never_enters_the_ladder(monkeypatch, tmp_path: Path) -> None:

@@ -295,7 +295,8 @@ def _live_validate(spec: dict, generated: list[dict], spec_url: str, api_key: st
                 attempts = [a.__dict__ for a in result.attempts]
 
         verdicts.append({"endpoint": endpoint, "status": report["status"],
-                         "passed": report["status"] == STATUS_PASS, "attempts": attempts})
+                         "passed": report["status"] == STATUS_PASS, "attempts": attempts,
+                         "http_status": report.get("http_status")})
     return verdicts
 
 

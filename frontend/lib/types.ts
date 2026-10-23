@@ -22,6 +22,8 @@ export interface ValidatedEndpoint {
   passed?: boolean;
   reason?: string;
   attempts?: CorrectionAttempt[];
+  // the target's HTTP status code, when the sandbox call got one (shown for target_http_error)
+  http_status?: number | null;
 }
 
 export interface RunResult {

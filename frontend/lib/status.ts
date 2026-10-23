@@ -5,7 +5,9 @@
 // inline color decisions in components — so the mapping can't drift as more UI is added.
 //
 //   emerald (success)  -> verified_pass ONLY (and run-level "succeeded", i.e. all live-called passed)
-//   amber   (warn)     -> generated_only, verified_live_validation_failed, and in-progress states
+//   amber   (warn)     -> generated_only, verified_live_validation_failed, in-progress states, and the
+//                         4g findings about the target or spec (target_unreachable, target_http_error,
+//                         non_json_response): not Relay failures, and no patch can fix them
 //   red     (danger)   -> call_failed, sandbox_timeout, failed, ssrf_blocked, rate_limited, error,
 //                         and the 8 corrector-level codes (Step 3) — all failure modes
 //   slate   (neutral)  -> anything unknown
@@ -19,6 +21,9 @@ const TONE_BY_STATUS: Record<string, Tone> = {
   // warn — generated but not proven, reached-but-mismatched, or still working
   generated_only: "warn",
   verified_live_validation_failed: "warn",
+  target_unreachable: "warn",
+  target_http_error: "warn",
+  non_json_response: "warn",
   queued: "warn",
   running: "warn",
   // danger — failed, blocked, or rate-limited
@@ -94,6 +99,9 @@ const LABELS: Record<string, string> = {
   verified_live_validation_failed: "Reached API · response mismatch",
   call_failed: "Call failed",
   sandbox_timeout: "Timed out",
+  target_unreachable: "Target unreachable",
+  target_http_error: "Target API error",
+  non_json_response: "Non-JSON response",
   generated_only: "Generated · not live-tested",
   ssrf_blocked: "Blocked (SSRF)",
   queued: "Queued",
