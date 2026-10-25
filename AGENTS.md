@@ -6,13 +6,13 @@ Claude reads this at the START of every new session to understand what happened 
 ---
 
 ## Project State
-**Last updated:** 2026-10-23 (Session 12, addendum 4) — **Phase 3 in progress**
+**Last updated:** 2026-10-25 (Session 12, addendum 5) — **Phase 3 in progress**
 **Current branch:** main
-**Overall status:** MVP is **complete and live-verified end-to-end, frontend included** (see Session 2 close, 2026-07-26). Vercel frontend (`https://relay-cyan-rho.vercel.app`) → Cloudflare Worker (`https://relay-worker.abhiram-dev.workers.dev`) → GitHub Actions → Docker sandbox → Gemini self-correction → KV, with per-IP rate limiting, run-id isolation, and a code viewer. A real browser run polls to `Succeeded` / `verified_pass` and shows the real generated client. Nothing in the MVP is claimed-but-unproven. Tests (as of Session 12 addendum 4): backend 472 · worker 52 · frontend 43 hermetic, all green.
+**Overall status:** MVP is **complete and live-verified end-to-end, frontend included** (see Session 2 close, 2026-07-26). Vercel frontend (`https://relay-cyan-rho.vercel.app`) → Cloudflare Worker (`https://relay-worker.abhiram-dev.workers.dev`) → GitHub Actions → Docker sandbox → Gemini self-correction → KV, with per-IP rate limiting, run-id isolation, and a code viewer. A real browser run polls to `Succeeded` / `verified_pass` and shows the real generated client. Nothing in the MVP is claimed-but-unproven. Tests (as of Session 12 addendum 5): backend 580 · worker 52 · frontend 45 hermetic, all green.
 
 **Phase 2 (scoped 2026-07-26, build starting Session 3, 2026-07-27):** BYOK security infrastructure → multi-provider LLM (Gemini/OpenAI/Anthropic/Grok/OpenRouter) → honest error taxonomy → full QA re-verification → visual/UX pass → `/security-review` + remediation → final retest and deliver. **Progress:** Step 1 (BYOK) CLOSED live (Session 4). Step 2 (multi-provider) CLOSED live (Session 6, commits `4866d2a`→`7f846fb`) — see Session 6 for the full receipt; one accepted gap logged there (corrector proven live independently of the deployed pipeline, not together in one run — no test-injection hook exists in the public API for that). Step 3 (honest error taxonomy) CLOSED (Session 7, commits `caf86cf`→`dc5e5cf`) — see Session 7 for the full receipt; one deliberate scope boundary logged there at the time (per-attempt corrector codes rendered as raw tokens in the compact attempts list), closed the next step (Step 4 gave `status.ts` labels to all 7 corrector codes). Step 4 (full QA pass) CLOSED (Session 8, commits `bbb35fd`→`572c18d`) — see Session 8 for the full receipt, including a real production bug (the Action's infra-failure watchdog silently overwriting every classified error) found live and fixed, not just a coverage-extension step. Step 5 (visual/UX pass) CLOSED (Session 9, commits `c21ca2a`→`8ce5b3d`) — see Session 9 for the full receipt and a logged pattern-to-watch (`status.ts` caught incomplete twice now). Step 6 (security review) CLOSED (Session 10, commits `03c8b2c`→`c09b7ee`) — see Session 10 for the full receipt, including a prominent standalone callout for F5 (the most severe finding in the project: RCE via generated code an end user downloads and trusts) and an explicit note that the scan's own adversarial verification panel never completed, substituted with an independent manual trace. **Step 7 (final retest, README, deliver) CLOSED (Session 11, commits `19b2a31`→`9e28f98`)** — see Session 11 for the full receipt, including a full residuals audit across Sessions 1–10 and two accumulated documentation inconsistencies caught and fixed. **Phase 2 is now fully closed** — every step has its own live receipt, nothing claimed-but-unproven remains.
 
-**Phase 3 (scoped 2026-10-19, in progress):** verified-live generation with per-operation receipts → generator fidelity → general param synthesis → target-API auth → receipt schema + MCP output. Design: ARCHITECTURE.md "Phase 3 — verified-live USP and target auth". Checklist: TODO.md Phase 3 sprint. **Progress:** pieces 0, 1, 2 (+2b, 2c), 3a, 3b, 3c, 4b, 4c, 4d, 4e-i, 4e-ii, 4f and 4h are done (`e1ba802`→`9c60097`, see Session 12 and its addenda). **Next piece:** 4g (`call_failed` split), then piece 5 (general param synthesis). Open live-receipt gaps: OpenAI billing is inactive on the project's OpenAI key, so 3a and the 400 json_schema rule are hermetic-only.
+**Phase 3 (scoped 2026-10-19, in progress):** verified-live generation with per-operation receipts → generator fidelity → general param synthesis → target-API auth → receipt schema + MCP output. Design: ARCHITECTURE.md "Phase 3 — verified-live USP and target auth". Checklist: TODO.md Phase 3 sprint. **Progress:** pieces 0, 1, 2 (+2b, 2c), 3a, 3b, 3c, 4b, 4c, 4d, 4e-i, 4e-ii, 4f, 4h and 4g are done (`e1ba802`→`552892e`, see Session 12 and its addenda). **Next piece:** 4i (recursion error code: a `recursion_limit_handler` raising a Relay-owned `ResolutionError` subclass, classified as `unsupported_spec_construct`), then piece 5 (general param synthesis). Open live-receipt gaps: OpenAI billing is inactive on the project's OpenAI key, so 3a and the 400 json_schema rule are hermetic-only.
 
 ---
 
@@ -714,5 +714,111 @@ decision and the 4 spec-defect specs. TODO.md has the backlog items.
 clean. No backend linter is installed.
 
 **Next piece (at the time):** 4g, the `call_failed` split; then piece 5.
+
+### Session 12 addendum 5 — 2026-10-25 — piece 4g, the `call_failed` split (Claude Code)
+**Step 0 findings (before the change):**
+- **What produced `call_failed`, and what reached the report.**
+  - Non-2xx: `http_status` plus `str(HTTPError)`, which carries the server's reason phrase and the
+    full URL including the query.
+  - Connection errors and timeouts: `{Class}: {message}`, with the URL and OS error text.
+  - Non-JSON body and malformed JSON: both are the same `requests.JSONDecodeError`.
+  - Client `TypeError`/`AttributeError`: not caught in `main()`, so they reached the last-resort
+    handler as `runner crash` plus the full traceback.
+  - No result line: up to 2000 chars of container stderr.
+- **Where response-derived text went.**
+  - `validated[].attempts[].detail` (300 chars per re-run): stored in KV and **publicly readable via
+    the run GET**, because the Worker strips only `error_detail`. The strongest case is a pydantic
+    `ValidationError`'s `input_value=` excerpts of the live response.
+  - The corrector prompt: up to 2000 chars, delimited (F7).
+  - Not the Action log: live mode prints no verdicts.
+  - `http_status` never reached the verdict.
+- **Run-level status (unchanged, reported only):** any live-called operation that does not pass makes
+  the run `failed` (`ci_runner.py:434-448`). A run whose only problems are 4g findings is therefore
+  `failed`.
+- **Frontend.**
+  - Endpoint statuses render only through `status.ts`; `errors.ts` is for run-level `error` codes,
+    so it got no entries.
+  - The tone is named `warn`, not `warning`.
+  - ValidationReport's summary line counts only `danger` tones as "failed", so the new `warn`
+    statuses are not in its "N failed" count, even though the run fails. Unchanged.
+
+**What changed (`552892e`).**
+- **Runner (`sandbox/runner.py`) classifies in-container.** It emits `failure_kind` (one of
+  `FAILURE_KINDS`), `http_status` and the exception class name. `detail` is built from those fields
+  only.
+  - Never a response body, header, URL or exception message; the traceback is dropped.
+  - `non_json` vs `decode` is decided by whether the response's Content-Type claimed JSON. A
+    temporary `Response.json` wrapper, restored in `finally`, records only that bool.
+  - Any other exception, including other `RequestException`s such as `TooManyRedirects`, is
+    `client_exception` (ladder-eligible, conservative).
+  - The host's no-result path keeps the exit code only.
+- **Mapping:** `sandbox.classify_call_failure` (pure), applied in `_report`. New `STATUS_*`
+  constants.
+- **Corrector:** `correct.UNFIXABLE_STATUSES` gains the three statuses; it stays the one named set.
+- **Verdicts** carry `http_status`.
+- **Frontend:**
+  - `status.ts`: tone `warn` and labels "Target unreachable" / "Target API error" /
+    "Non-JSON response".
+  - EndpointRow shows `HTTP <code>` beside `target_http_error` via `report.ts`'s pure
+    `httpStatusNote`.
+  - No new component; no Worker change (it passes results through).
+
+| runner `failure_kind` | http_status | final status | ladder? |
+|---|---|---|---|
+| `connection`, `timeout` | any | `target_unreachable` | no |
+| `http_status` | any non-2xx except 400/422 (incl. 3xx, 401, 403, 404, 418, 429, 5xx) | `target_http_error` | no |
+| `http_status` | 400, 422, or missing | `call_failed` | yes |
+| `non_json`, `decode` | any | `non_json_response` | no |
+| `client_exception` | any | `call_failed` | yes |
+| unknown or missing | any | `call_failed` | yes |
+
+**Tests.**
+- `test_sandbox.py`:
+  - the mapping, exhaustively: 8 kinds × {399, 400, 401, 404, 418, 422, 429, 500, 503, 599, None};
+  - spot values;
+  - the real `runner.main()` in-process against a stubbed `Session.send` for 7 failure cases. The
+    body, reason phrase, a header and the exception message carry a canary; the canary appears in
+    neither the printed output nor the host report, and no key contains
+    body/text/content/message.
+- `test_correct.py`:
+  - each new status returns with 0 corrector and 0 sandbox calls and keeps its status and
+    `http_status`;
+  - 400, 422, `client_exception`, an unknown kind and no kind all enter the ladder;
+  - the named-set test was updated.
+- Frontend: tone/label and `httpStatusNote` tests.
+- Mutation checks, each failing as intended:
+  - old runner: 7 canary/kind tests fail;
+  - `target_http_error` removed from the set: 2 tests fail;
+  - the `non_json_response` label removed from `status.ts`: the coverage test fails.
+
+**Receipts (local, `ci_runner.run()` in local mode, real Docker sandbox, real network).**
+- Setup: `relay-sandbox`/`relay-sidecar` rebuilt first. The stub corrector records every call and
+  raises; no provider is ever called.
+- **Petstore v3:** run `failed`, 1 stub call in total.
+  - `/pet/findByStatus`: `verified_live_validation_failed`, stub called once (a fixable model
+    mismatch: the live API omits the required `name`).
+  - `/store/inventory`: `target_http_error`, `http_status` 500, 0 stub calls.
+  - `/user/login`: `non_json_response`, 0 stub calls.
+  - The other 4 GETs (`/pet/findByTags`, `/pet/{petId}`, `/store/order/{orderId}`,
+    `/user/{username}`) are `generated_only` ("required-param values unavailable"); 11
+    `generated_only` in total.
+  - The 4e-ii record says "4 GETs were called live" but names only 3. Today 3 are; the
+    discrepancy is noted, not resolved.
+- **Open-Meteo:** `verified_pass`, 0 stub calls.
+- **Not covered live:** `target_unreachable` (connection and timeout) is covered only hermetically.
+  A safe live receipt is not available. Generated clients set no request timeout, so a hung target
+  is the host's `sandbox_timeout` first.
+
+**Findings.**
+- **Less context for client crashes.** A `client_exception` now reaches the corrector as its class
+  name only (no message, no traceback), so a client crash gets less context than before.
+- **`ValidationError` detail is still public.** `verified_live_validation_failed` detail still
+  quotes live response values into the corrector prompt and into `attempts[].detail`, which is
+  public via the run GET. This is out of scope for 4g and needs a decision.
+
+**Tests:** backend **580** (was 472) · worker **52** · frontend **45** (was 43). `tsc` and
+`next lint` are clean.
+
+**Next piece (at the time):** 4i, the recursion error code; then piece 5.
 
 <!-- Copy the block above for each new session -->
