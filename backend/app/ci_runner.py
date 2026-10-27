@@ -111,6 +111,17 @@ def _safe_ref_fetch_url_text(url, cache={}, encoding=None):  # noqa: B006 (mirro
     return entry
 
 
+class SpecRecursionError(PranceResolutionError):
+    """A recursive $ref (a schema that contains itself). Legal OpenAPI, but Relay can't resolve it
+    yet: classified unsupported_spec_construct, not spec_invalid. Carries no spec text."""
+
+
+def _raise_on_recursion(limit, parsed_url, recursions=()):
+    """prance recursion_limit_handler: raise our own subtype so the classifier keys on the type,
+    never on prance's message text."""
+    raise SpecRecursionError("recursive $ref: not supported yet")
+
+
 @contextlib.contextmanager
 def guarded_prance_resolve():
     """Gate every URL prance fetches during $ref resolution through _guard_fetch_url, and replace
@@ -340,6 +351,8 @@ def _classify_pipeline_error(exc: Exception) -> str:
         return "sandbox_unavailable"
     if isinstance(exc, requests.RequestException):
         return "spec_fetch_failed"
+    if isinstance(exc, SpecRecursionError):  # before the generic ResolutionError branch below
+        return "unsupported_spec_construct"
     if isinstance(exc, (PranceParseError, PranceResolutionError, PranceValidationError, OpenAPIValidationError)):
         return "spec_invalid"
     return "internal_error"
@@ -359,7 +372,7 @@ def load_spec_text(text: str, final_url: str,
     on_version(label)
     check_spec_version(document)
     with guarded_prance_resolve():  # gate every $ref prance fetches during resolution
-        spec = ResolvingParser(spec_string=text).specification
+        spec = ResolvingParser(spec_string=text, recursion_limit_handler=_raise_on_recursion).specification
     validate_spec(spec)
     return spec, final_url, label
 

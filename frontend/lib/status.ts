@@ -7,7 +7,8 @@
 //   emerald (success)  -> verified_pass ONLY (and run-level "succeeded", i.e. all live-called passed)
 //   amber   (warn)     -> generated_only, verified_live_validation_failed, in-progress states, and the
 //                         4g findings about the target or spec (target_unreachable, target_http_error,
-//                         non_json_response): not Relay failures, and no patch can fix them
+//                         non_json_response): not Relay failures, and no patch can fix them; and the
+//                         run-level unsupported_spec_construct (4i): the spec may be valid, Relay can't resolve it yet
 //   red     (danger)   -> call_failed, sandbox_timeout, failed, ssrf_blocked, rate_limited, error,
 //                         and the 8 corrector-level codes (Step 3) — all failure modes
 //   slate   (neutral)  -> anything unknown
@@ -50,6 +51,7 @@ const TONE_BY_STATUS: Record<string, Tone> = {
   spec_fetch_failed: "danger",
   spec_invalid: "danger",
   unsupported_spec_version: "danger",
+  unsupported_spec_construct: "warn", // 4i: a likely-valid spec Relay can't resolve yet, not a broken one
   no_operations_generated: "danger",
   ssrf_blocked_spec: "danger",
   generation_failed: "danger",
@@ -121,6 +123,7 @@ const LABELS: Record<string, string> = {
   spec_fetch_failed: "Fetch failed",
   spec_invalid: "Invalid spec",
   unsupported_spec_version: "Unsupported version",
+  unsupported_spec_construct: "Unsupported construct",
   no_operations_generated: "Nothing generated",
   ssrf_blocked_spec: "Blocked (SSRF)",
   generation_failed: "Generation failed",

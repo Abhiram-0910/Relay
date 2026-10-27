@@ -54,6 +54,11 @@ describe("status → tone SSOT", () => {
     }
   });
 
+  it("unsupported_spec_construct is warn: the spec may be valid, Relay can't resolve it yet", () => {
+    expect(toneOf("unsupported_spec_construct")).toBe("warn");
+    expect(labelOf("unsupported_spec_construct")).toBe("Unsupported construct");
+  });
+
   it("unknown statuses fall back to neutral, never a false success", () => {
     expect(toneOf("something_new")).toBe("neutral");
   });

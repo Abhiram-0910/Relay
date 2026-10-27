@@ -207,6 +207,75 @@ def test_classify_pipeline_error_maps_every_known_type() -> None:
     assert classify(RuntimeError("something else entirely")) == "internal_error"
 
 
+# --- piece 4i: recursive $ref is classified on its own type, ahead of the generic ResolutionError --
+
+def _spec_with_schema(schema: str, components: str = "") -> str:
+    return f"""
+openapi: "3.0.0"
+info: {{title: t, version: "1"}}
+paths:
+  /x:
+    get:
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: {schema}
+{components}"""
+
+
+_RECURSIVE_SPEC = _spec_with_schema('{$ref: "#/components/schemas/Node"}', """
+components:
+  schemas:
+    Node:
+      type: object
+      properties:
+        children: {type: array, items: {$ref: "#/components/schemas/Node"}}
+""")
+
+
+def _load_error(text: str) -> Exception:
+    with pytest.raises(Exception) as exc_info:
+        ci_runner.load_spec_text(text, "https://specs.example/o.yaml")
+    return exc_info.value
+
+
+def test_recursive_ref_is_unsupported_construct_not_spec_invalid() -> None:
+    exc = _load_error(_RECURSIVE_SPEC)
+    assert type(exc) is ci_runner.SpecRecursionError
+    assert ci_runner._classify_pipeline_error(exc) == "unsupported_spec_construct"
+    assert "Node" not in str(exc)  # no spec text in the message
+
+
+def test_unresolvable_internal_ref_stays_spec_invalid() -> None:
+    exc = _load_error(_spec_with_schema('{$ref: "#/components/schemas/Missing"}'))
+    assert isinstance(exc, PranceResolutionError) and not isinstance(exc, ci_runner.SpecRecursionError)
+    assert ci_runner._classify_pipeline_error(exc) == "spec_invalid"
+
+
+def test_relay_ref_fetch_failure_stays_spec_invalid(monkeypatch) -> None:
+    from unittest.mock import MagicMock
+
+    monkeypatch.setattr(ci_runner, "resolve_and_validate_host", lambda url: "8.8.8.8")
+    monkeypatch.setattr(ci_runner, "_redirect_safe_get",
+                        lambda url, *, timeout: MagicMock(ok=False, status_code=404, reason="Not Found"))
+    exc = _load_error(_spec_with_schema('{$ref: "https://8.8.8.8/shared.yaml#/Thing"}'))
+    assert type(exc) is PranceResolutionError
+    assert ci_runner._classify_pipeline_error(exc) == "spec_invalid"
+
+
+def test_ssrf_blocked_ref_stays_ssrf_blocked_spec() -> None:
+    exc = _load_error(_MALICIOUS_SPEC)
+    assert ci_runner._classify_pipeline_error(exc) == "ssrf_blocked_spec"
+
+
+def test_classify_checks_recursion_before_generic_resolution_error() -> None:
+    classify = ci_runner._classify_pipeline_error
+    assert classify(ci_runner.SpecRecursionError("x")) == "unsupported_spec_construct"
+    assert classify(PranceResolutionError("x")) == "spec_invalid"
+
+
 class _CapturingReporter:
     """Duck-typed stand-in for Reporter — run() only ever calls .send()/.send_code() on whatever
     it's given, so this skips real env-var/HTTP plumbing and just records what was sent."""

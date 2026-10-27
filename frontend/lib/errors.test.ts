@@ -34,6 +34,9 @@ describe("errorMessage — code → plain language, never raw", () => {
       "Relay couldn't generate a client for any operation in this spec. Typical causes: no JSON responses, or parameter styles Relay doesn't support yet.",
     );
     expect(errorMessage("spec_invalid")).not.toMatch(/swagger/i);
+    expect(errorMessage("unsupported_spec_construct")).toBe(
+      "This spec uses a construct Relay can't resolve yet (for example recursive schemas). The spec itself may be valid.",
+    );
   });
 
   it("falls back to a generic message for an unrecognized code, never blank/raw", () => {
@@ -61,6 +64,7 @@ describe("suggestsByok — only where switching key source genuinely helps", () 
     expect(suggestsByok("byok_key_missing")).toBe(false);
     expect(suggestsByok("byok_fetch_failed")).toBe(false);
     expect(suggestsByok("unsupported_spec_version")).toBe(false);
+    expect(suggestsByok("unsupported_spec_construct")).toBe(false);
     expect(suggestsByok("no_operations_generated")).toBe(false);
     expect(suggestsByok("model_unsupported")).toBe(false);
     expect(suggestsByok(null)).toBe(false);

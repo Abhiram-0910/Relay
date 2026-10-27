@@ -1,7 +1,7 @@
 import { StatusBadge } from "@/components/StatusBadge";
 import { suggestsByok } from "@/lib/errors";
-import { httpStatusNote, skippedSummary } from "@/lib/report";
-import { labelOf, styleOf, toneOf } from "@/lib/status";
+import { httpStatusNote, problemSummary, skippedSummary } from "@/lib/report";
+import { labelOf, styleOf } from "@/lib/status";
 import type { RunResult, ValidatedEndpoint } from "@/lib/types";
 
 function EndpointRow({ v }: { v: ValidatedEndpoint }) {
@@ -50,7 +50,7 @@ function EndpointRow({ v }: { v: ValidatedEndpoint }) {
 export function ValidationReport({ result }: { result: RunResult }) {
   const validated = result.validated ?? [];
   const verified = validated.filter((v) => v.status === "verified_pass").length;
-  const liveFailed = validated.filter((v) => toneOf(v.status) === "danger").length;
+  const problems = problemSummary(validated.map((v) => v.status));
   const notTested = validated.filter((v) => v.status === "generated_only").length;
 
   return (
@@ -61,7 +61,7 @@ export function ValidationReport({ result }: { result: RunResult }) {
           {result.endpoint_count ?? validated.length} operation
           {(result.endpoint_count ?? validated.length) === 1 ? "" : "s"} · {verified} verified live
           {notTested > 0 && ` · ${notTested} generated only`}
-          {liveFailed > 0 && ` · ${liveFailed} failed`}
+          {problems && ` · ${problems}`}
           {result.skipped && result.skipped.length > 0 && ` · ${result.skipped.length} skipped`}
         </p>
       </div>

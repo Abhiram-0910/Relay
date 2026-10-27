@@ -45,7 +45,8 @@ LABELS = _ts_record_keys(ROOT / "frontend/lib/status.ts", "LABELS")
 
 
 def test_the_code_lists_were_actually_found() -> None:
-    assert {"spec_invalid", "unsupported_spec_version", "no_operations_generated"} <= PIPELINE_CODES
+    assert {"spec_invalid", "unsupported_spec_version", "unsupported_spec_construct",
+            "no_operations_generated"} <= PIPELINE_CODES
     assert {"model_unsupported", "corrector_error"} <= CORRECTOR_CODES
     assert {"verified_pass", "call_failed"} <= SANDBOX_STATUSES
 
