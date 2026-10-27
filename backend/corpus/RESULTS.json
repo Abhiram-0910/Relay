@@ -1,10 +1,10 @@
 {
   "meta": {
     "git": {
-      "sha": "9c6009759139c21ee42bd829445f2d6b442fcf04",
+      "sha": "f9225047f756f8c555bb38e13c2951e629c6aba5",
       "uncommitted": []
     },
-    "date": "2026-10-23 15:14Z",
+    "date": "2026-10-27 12:11Z",
     "versions": {
       "venv": {
         "python": "3.14.4",
@@ -15,7 +15,7 @@
         "requests": "2.34.2"
       },
       "sandbox_image": {
-        "python": "3.12.15",
+        "python": "3.12.16",
         "pydantic": "2.14.1",
         "requests": "2.34.2"
       }
@@ -68,7 +68,7 @@
         "operation_or_path_servers": true,
         "non_json_responses": false
       },
-      "seconds": 2.5
+      "seconds": 2.3
     },
     {
       "id": "swagger.io:petstore3",
@@ -94,7 +94,7 @@
         "operation_or_path_servers": false,
         "non_json_responses": true
       },
-      "seconds": 3.2
+      "seconds": 3.4
     },
     {
       "id": "1password.local:connect",
@@ -120,7 +120,7 @@
         "operation_or_path_servers": true,
         "non_json_responses": true
       },
-      "seconds": 2.8
+      "seconds": 3.0
     },
     {
       "id": "6-dot-authentiqio.appspot.com",
@@ -146,7 +146,7 @@
         "operation_or_path_servers": false,
         "non_json_responses": true
       },
-      "seconds": 2.4
+      "seconds": 2.5
     },
     {
       "id": "ably.io:platform",
@@ -241,7 +241,7 @@
         "operation_or_path_servers": false,
         "non_json_responses": false
       },
-      "seconds": 10.2
+      "seconds": 10.4
     },
     {
       "id": "amentum.space:aviation_radiation",
@@ -265,7 +265,7 @@
         "operation_or_path_servers": false,
         "non_json_responses": false
       },
-      "seconds": 2.0
+      "seconds": 1.9
     },
     {
       "id": "apache.org",
@@ -291,7 +291,7 @@
         "operation_or_path_servers": false,
         "non_json_responses": true
       },
-      "seconds": 13.9
+      "seconds": 13.7
     },
     {
       "id": "api.ebay.com:sell-account",
@@ -317,12 +317,12 @@
         "operation_or_path_servers": false,
         "non_json_responses": false
       },
-      "seconds": 8.0
+      "seconds": 7.2
     },
     {
       "id": "api.video",
       "openapi": "3.0.0",
-      "status": "load_failed:spec_invalid",
+      "status": "load_failed:unsupported_spec_construct",
       "spec_version": null,
       "ops_total": 47,
       "generated": 0,
@@ -335,8 +335,8 @@
       "exec_skipped_required_body": 0,
       "exec_failures": [],
       "features": {},
-      "load_error": "ResolutionError",
-      "seconds": 0.3
+      "load_error": "SpecRecursionError",
+      "seconds": 0.2
     },
     {
       "id": "api2pdf.com",
@@ -405,12 +405,12 @@
         "operation_or_path_servers": false,
         "non_json_responses": false
       },
-      "seconds": 9.4
+      "seconds": 9.6
     },
     {
       "id": "apideck.com:accounting",
       "openapi": "3.0.3",
-      "status": "load_failed:spec_invalid",
+      "status": "load_failed:unsupported_spec_construct",
       "spec_version": null,
       "ops_total": 53,
       "generated": 0,
@@ -423,7 +423,7 @@
       "exec_skipped_required_body": 0,
       "exec_failures": [],
       "features": {},
-      "load_error": "ResolutionError",
+      "load_error": "SpecRecursionError",
       "seconds": 0.5
     },
     {
@@ -450,7 +450,7 @@
         "operation_or_path_servers": false,
         "non_json_responses": true
       },
-      "seconds": 6.3
+      "seconds": 6.1
     },
     {
       "id": "apigee.net:marketcheck-cars",
@@ -476,7 +476,7 @@
         "operation_or_path_servers": false,
         "non_json_responses": true
       },
-      "seconds": 19.7
+      "seconds": 20.7
     },
     {
       "id": "apis.guru",
@@ -563,7 +563,7 @@
         "operation_or_path_servers": false,
         "non_json_responses": false
       },
-      "seconds": 1.7
+      "seconds": 1.6
     },
     {
       "id": "apiz.ebay.com:sell-finances",
@@ -587,7 +587,7 @@
         "operation_or_path_servers": false,
         "non_json_responses": false
       },
-      "seconds": 2.2
+      "seconds": 2.3
     },
     {
       "id": "apple.com:sirikit-cloud-media",
@@ -684,7 +684,7 @@
         "operation_or_path_servers": false,
         "non_json_responses": false
       },
-      "seconds": 8.7
+      "seconds": 8.5
     },
     {
       "id": "art19.com",
@@ -727,7 +727,7 @@
         "operation_or_path_servers": false,
         "non_json_responses": false
       },
-      "seconds": 6.9
+      "seconds": 7.3
     },
     {
       "id": "bbc.com",
@@ -753,12 +753,12 @@
         "operation_or_path_servers": false,
         "non_json_responses": true
       },
-      "seconds": 162.4
+      "seconds": 172.6
     },
     {
       "id": "bbci.co.uk",
       "openapi": "3.0.0",
-      "status": "load_failed:spec_invalid",
+      "status": "load_failed:unsupported_spec_construct",
       "spec_version": null,
       "ops_total": 30,
       "generated": 0,
@@ -771,7 +771,7 @@
       "exec_skipped_required_body": 0,
       "exec_failures": [],
       "features": {},
-      "load_error": "ResolutionError",
+      "load_error": "SpecRecursionError",
       "seconds": 0.1
     },
     {
@@ -822,7 +822,7 @@
     {
       "id": "bigoven.com",
       "openapi": "3.0.0",
-      "status": "load_failed:spec_invalid",
+      "status": "load_failed:unsupported_spec_construct",
       "spec_version": null,
       "ops_total": 66,
       "generated": 0,
@@ -835,7 +835,7 @@
       "exec_skipped_required_body": 0,
       "exec_failures": [],
       "features": {},
-      "load_error": "ResolutionError",
+      "load_error": "SpecRecursionError",
       "seconds": 0.2
     }
   ]

@@ -8,11 +8,11 @@ Claude reads this at the START of every new session to understand what happened 
 ## Project State
 **Last updated:** 2026-10-25 (Session 12, addendum 5) — **Phase 3 in progress**
 **Current branch:** main
-**Overall status:** MVP is **complete and live-verified end-to-end, frontend included** (see Session 2 close, 2026-07-26). Vercel frontend (`https://relay-cyan-rho.vercel.app`) → Cloudflare Worker (`https://relay-worker.abhiram-dev.workers.dev`) → GitHub Actions → Docker sandbox → Gemini self-correction → KV, with per-IP rate limiting, run-id isolation, and a code viewer. A real browser run polls to `Succeeded` / `verified_pass` and shows the real generated client. Nothing in the MVP is claimed-but-unproven. Tests (as of Session 12 addendum 5): backend 580 · worker 52 · frontend 45 hermetic, all green.
+**Overall status:** MVP is **complete and live-verified end-to-end, frontend included** (see Session 2 close, 2026-07-26). Vercel frontend (`https://relay-cyan-rho.vercel.app`) → Cloudflare Worker (`https://relay-worker.abhiram-dev.workers.dev`) → GitHub Actions → Docker sandbox → Gemini self-correction → KV, with per-IP rate limiting, run-id isolation, and a code viewer. A real browser run polls to `Succeeded` / `verified_pass` and shows the real generated client. Nothing in the MVP is claimed-but-unproven. Tests (as of Session 12 addendum 6): backend 586 · worker 52 · frontend 52 hermetic, all green.
 
 **Phase 2 (scoped 2026-07-26, build starting Session 3, 2026-07-27):** BYOK security infrastructure → multi-provider LLM (Gemini/OpenAI/Anthropic/Grok/OpenRouter) → honest error taxonomy → full QA re-verification → visual/UX pass → `/security-review` + remediation → final retest and deliver. **Progress:** Step 1 (BYOK) CLOSED live (Session 4). Step 2 (multi-provider) CLOSED live (Session 6, commits `4866d2a`→`7f846fb`) — see Session 6 for the full receipt; one accepted gap logged there (corrector proven live independently of the deployed pipeline, not together in one run — no test-injection hook exists in the public API for that). Step 3 (honest error taxonomy) CLOSED (Session 7, commits `caf86cf`→`dc5e5cf`) — see Session 7 for the full receipt; one deliberate scope boundary logged there at the time (per-attempt corrector codes rendered as raw tokens in the compact attempts list), closed the next step (Step 4 gave `status.ts` labels to all 7 corrector codes). Step 4 (full QA pass) CLOSED (Session 8, commits `bbb35fd`→`572c18d`) — see Session 8 for the full receipt, including a real production bug (the Action's infra-failure watchdog silently overwriting every classified error) found live and fixed, not just a coverage-extension step. Step 5 (visual/UX pass) CLOSED (Session 9, commits `c21ca2a`→`8ce5b3d`) — see Session 9 for the full receipt and a logged pattern-to-watch (`status.ts` caught incomplete twice now). Step 6 (security review) CLOSED (Session 10, commits `03c8b2c`→`c09b7ee`) — see Session 10 for the full receipt, including a prominent standalone callout for F5 (the most severe finding in the project: RCE via generated code an end user downloads and trusts) and an explicit note that the scan's own adversarial verification panel never completed, substituted with an independent manual trace. **Step 7 (final retest, README, deliver) CLOSED (Session 11, commits `19b2a31`→`9e28f98`)** — see Session 11 for the full receipt, including a full residuals audit across Sessions 1–10 and two accumulated documentation inconsistencies caught and fixed. **Phase 2 is now fully closed** — every step has its own live receipt, nothing claimed-but-unproven remains.
 
-**Phase 3 (scoped 2026-10-19, in progress):** verified-live generation with per-operation receipts → generator fidelity → general param synthesis → target-API auth → receipt schema + MCP output. Design: ARCHITECTURE.md "Phase 3 — verified-live USP and target auth". Checklist: TODO.md Phase 3 sprint. **Progress:** pieces 0, 1, 2 (+2b, 2c), 3a, 3b, 3c, 4b, 4c, 4d, 4e-i, 4e-ii, 4f, 4h and 4g are done (`e1ba802`→`552892e`, see Session 12 and its addenda). **Next piece:** 4i (recursion error code: a `recursion_limit_handler` raising a Relay-owned `ResolutionError` subclass, classified as `unsupported_spec_construct`), then piece 5 (general param synthesis). Open live-receipt gaps: OpenAI billing is inactive on the project's OpenAI key, so 3a and the 400 json_schema rule are hermetic-only.
+**Phase 3 (scoped 2026-10-19, in progress):** verified-live generation with per-operation receipts → generator fidelity → general param synthesis → target-API auth → receipt schema + MCP output. Design: ARCHITECTURE.md "Phase 3 — verified-live USP and target auth". Checklist: TODO.md Phase 3 sprint. **Progress:** pieces 0, 1, 2 (+2b, 2c), 3a, 3b, 3c, 4b, 4c, 4d, 4e-i, 4e-ii, 4f, 4h, 4g and 4i are done (`e1ba802`→`f922504`, see Session 12 and its addenda). **Next piece:** piece 5 (general param synthesis); its step 0 must first list every Petstore v3 operation's live/generated_only status (TODO.md). Open live-receipt gaps: OpenAI billing is inactive on the project's OpenAI key, so 3a and the 400 json_schema rule are hermetic-only.
 
 ---
 
@@ -820,5 +820,71 @@ clean. No backend linter is installed.
 `next lint` are clean.
 
 **Next piece (at the time):** 4i, the recursion error code; then piece 5.
+
+### Session 12 addendum 6 — 2026-10-27 — piece 4i, recursive schemas classified honestly (Claude Code)
+**Step 0 findings (before the change):**
+- **prance's handler contract** (prance 26.7.19.0, `util/resolver.py`). The default handler
+  (`:112-122`) raises a bare `ResolutionError` whose message carries the cycle path. The handler is
+  called as `handler(limit, parsed_url, recursions)` from `_build_recursion_chain` (`:458-460`),
+  reached through `_unroll_recursive` (`:409`) only when discovery found a cycle. A `KEEP_REF`
+  return leaves the `$ref`; any other return value becomes the innermost schema. There is no `try`
+  between the handler and `ResolvingParser`; resolver.py's only `except` blocks are the deepcopy
+  fallback (`:69`) and `path_get` (`:633`). So an exception raised by the handler reaches the
+  caller unwrapped. `ResolvingParser._validate` forwards `recursion_limit_handler` (`__init__.py:297`).
+- **Classifier mapping before 4i.** recursion → bare `ResolutionError` → `spec_invalid`;
+  unresolvable internal `$ref` (resolver.py:634) → `spec_invalid`; Relay's own non-ok `$ref` fetch
+  (`ci_runner.py:106`) → `spec_invalid`; SSRF-blocked `$ref` → `SSRFError`, unwrapped (checked live:
+  no cause or context) → `ssrf_blocked_spec`; transport error on a `$ref` fetch → `spec_fetch_failed`.
+- **Summary line.** `ValidationReport.tsx:53` counted only `danger` tones as "failed".
+  `target_unreachable`, `target_http_error`, `non_json_response` and
+  `verified_live_validation_failed` were counted nowhere, although each fails the run
+  (`ci_runner.py:447-448`).
+- **Other `ResolvingParser` callers.** `scripts/run_corpus.py` goes through `load_spec_text`, so it
+  gets the handler. It already classifies with `_classify_pipeline_error`, and its `offline_refs`
+  still raises a plain `ResolutionError` (`spec_invalid`). `test_ci_runner.py`'s SSRF test builds
+  `ResolvingParser` directly, deliberately without the handler. `test_spec_version.py` mocks it.
+  The Worker stores `error` as a passthrough (`index.js:170`) and lists no codes.
+
+**What changed (`f922504`).**
+- `ci_runner.py`: `SpecRecursionError(PranceResolutionError)`, whose message has no spec text, and
+  `_raise_on_recursion`, passed as `recursion_limit_handler` in `load_spec_text`. `recursion_limit`
+  stays at prance's default (1). No `keep_ref_on_recursion`, no permissive mode, and the SSRF
+  guard is unchanged. `_classify_pipeline_error` checks `SpecRecursionError` before the generic
+  prance branch and returns `unsupported_spec_construct`.
+- `errors.ts`: "This spec uses a construct Relay can't resolve yet (for example recursive
+  schemas). The spec itself may be valid." `suggestsByok` is false.
+- `status.ts`: `warn` tone, label "Unsupported construct". This is the only `warn` pipeline code:
+  the spec is probably valid.
+- `report.ts` `problemSummary` (pure, used by ValidationReport): every status other than
+  `verified_pass`/`generated_only` is counted. `danger` statuses read "N failed"; the rest (warn
+  findings, response mismatch, unknown statuses) read "N need(s) attention", for example
+  "2 failed · 1 needs attention". The run-level status logic is unchanged (piece 7 decides it).
+- Tests: backend 580 → 586 (5 classification/ordering tests through `load_spec_text`, plus the new
+  coverage parameter); frontend 45 → 52 (6 `problemSummary`, 1 status); worker 52.
+- Mutation checks:
+  - the errors.ts entry removed: the coverage test fails;
+  - the handler kwarg removed: the recursion test fails;
+  - the classifier branch removed: 3 tests fail.
+
+**Receipts (cached corpus bytes, remote `$ref` fetches refused, no network).**
+- `api.video`, `apideck.com:accounting`, `bbci.co.uk`, `bigoven.com`: `SpecRecursionError` →
+  `unsupported_spec_construct`.
+- An inline spec with an unresolvable `#/components/schemas/Missing`: `ResolutionError` →
+  `spec_invalid`.
+- `open-meteo.com:forecast` loads (`openapi 3.1.0`, 1 path); `swagger.io:petstore3` loads
+  (`openapi 3.0.4`, 13 paths).
+
+**Corpus (images rebuilt, run from a clean tree at `f922504`).**
+- Those 4 specs moved from `load_failed:spec_invalid` (ResolutionError) to
+  `load_failed:unsupported_spec_construct` (SpecRecursionError).
+- Nothing else changed: generated 465, exec ok 405, operations 985, every other spec's counts
+  identical.
+- Gates unchanged: G1 0, G2 7, G3 0, G4 0, G5 0.
+- **Finding:** the rebuilt `relay-sandbox` image reports python 3.12.16 (was 3.12.15). The base
+  image isn't pinned to a patch release; this is covered by the existing pinning item.
+
+**CI:** run 40501900948 (code) green.
+
+**Next piece (at the time):** piece 5, general param synthesis.
 
 <!-- Copy the block above for each new session -->
