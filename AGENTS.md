@@ -8,11 +8,11 @@ Claude reads this at the START of every new session to understand what happened 
 ## Project State
 **Last updated:** 2026-10-25 (Session 12, addendum 5) — **Phase 3 in progress**
 **Current branch:** main
-**Overall status:** MVP is **complete and live-verified end-to-end, frontend included** (see Session 2 close, 2026-07-26). Vercel frontend (`https://relay-cyan-rho.vercel.app`) → Cloudflare Worker (`https://relay-worker.abhiram-dev.workers.dev`) → GitHub Actions → Docker sandbox → Gemini self-correction → KV, with per-IP rate limiting, run-id isolation, and a code viewer. A real browser run polls to `Succeeded` / `verified_pass` and shows the real generated client. Nothing in the MVP is claimed-but-unproven. Tests (as of Session 12 addendum 6): backend 586 · worker 52 · frontend 52 hermetic, all green.
+**Overall status:** MVP is **complete and live-verified end-to-end, frontend included** (see Session 2 close, 2026-07-26). Vercel frontend (`https://relay-cyan-rho.vercel.app`) → Cloudflare Worker (`https://relay-worker.abhiram-dev.workers.dev`) → GitHub Actions → Docker sandbox → Gemini self-correction → KV, with per-IP rate limiting, run-id isolation, and a code viewer. A real browser run polls to `Succeeded` / `verified_pass` and shows the real generated client. Nothing in the MVP is claimed-but-unproven. Tests (as of Session 12 addendum 7): backend 693 · worker 52 · frontend 57 hermetic, all green.
 
 **Phase 2 (scoped 2026-07-26, build starting Session 3, 2026-07-27):** BYOK security infrastructure → multi-provider LLM (Gemini/OpenAI/Anthropic/Grok/OpenRouter) → honest error taxonomy → full QA re-verification → visual/UX pass → `/security-review` + remediation → final retest and deliver. **Progress:** Step 1 (BYOK) CLOSED live (Session 4). Step 2 (multi-provider) CLOSED live (Session 6, commits `4866d2a`→`7f846fb`) — see Session 6 for the full receipt; one accepted gap logged there (corrector proven live independently of the deployed pipeline, not together in one run — no test-injection hook exists in the public API for that). Step 3 (honest error taxonomy) CLOSED (Session 7, commits `caf86cf`→`dc5e5cf`) — see Session 7 for the full receipt; one deliberate scope boundary logged there at the time (per-attempt corrector codes rendered as raw tokens in the compact attempts list), closed the next step (Step 4 gave `status.ts` labels to all 7 corrector codes). Step 4 (full QA pass) CLOSED (Session 8, commits `bbb35fd`→`572c18d`) — see Session 8 for the full receipt, including a real production bug (the Action's infra-failure watchdog silently overwriting every classified error) found live and fixed, not just a coverage-extension step. Step 5 (visual/UX pass) CLOSED (Session 9, commits `c21ca2a`→`8ce5b3d`) — see Session 9 for the full receipt and a logged pattern-to-watch (`status.ts` caught incomplete twice now). Step 6 (security review) CLOSED (Session 10, commits `03c8b2c`→`c09b7ee`) — see Session 10 for the full receipt, including a prominent standalone callout for F5 (the most severe finding in the project: RCE via generated code an end user downloads and trusts) and an explicit note that the scan's own adversarial verification panel never completed, substituted with an independent manual trace. **Step 7 (final retest, README, deliver) CLOSED (Session 11, commits `19b2a31`→`9e28f98`)** — see Session 11 for the full receipt, including a full residuals audit across Sessions 1–10 and two accumulated documentation inconsistencies caught and fixed. **Phase 2 is now fully closed** — every step has its own live receipt, nothing claimed-but-unproven remains.
 
-**Phase 3 (scoped 2026-10-19, in progress):** verified-live generation with per-operation receipts → generator fidelity → general param synthesis → target-API auth → receipt schema + MCP output. Design: ARCHITECTURE.md "Phase 3 — verified-live USP and target auth". Checklist: TODO.md Phase 3 sprint. **Progress:** pieces 0, 1, 2 (+2b, 2c), 3a, 3b, 3c, 4b, 4c, 4d, 4e-i, 4e-ii, 4f, 4h, 4g and 4i are done (`e1ba802`→`f922504`, see Session 12 and its addenda). **Next piece:** piece 5 (general param synthesis); its step 0 must first list every Petstore v3 operation's live/generated_only status (TODO.md). Open live-receipt gaps: OpenAI billing is inactive on the project's OpenAI key, so 3a and the 400 json_schema rule are hermetic-only.
+**Phase 3 (scoped 2026-10-19, in progress):** verified-live generation with per-operation receipts → generator fidelity → general param synthesis → target-API auth → receipt schema + MCP output. Design: ARCHITECTURE.md "Phase 3 — verified-live USP and target auth". Checklist: TODO.md Phase 3 sprint. **Progress:** pieces 0, 1, 2 (+2b, 2c), 3a, 3b, 3c, 4b, 4c, 4d, 4e-i, 4e-ii, 4f, 4h, 4g, 4i and 5a are done (`e1ba802`→`5cbb1d7`, see Session 12 and its addenda). **Next piece:** 5b, the live corpus table (TODO.md). Open live-receipt gaps: OpenAI billing is inactive on the project's OpenAI key, so 3a and the 400 json_schema rule are hermetic-only.
 
 ---
 
@@ -886,5 +886,153 @@ clean. No backend linter is installed.
 **CI:** run 40501900948 (code) green.
 
 **Next piece (at the time):** piece 5, general param synthesis.
+
+### Session 12 addendum 7 — 2026-10-27 — piece 5a, general parameter synthesis (Claude Code)
+**Step 0 findings (before the change):**
+- **Selection before 5a** (`ci_runner._live_validate`). Method only: any non-GET was
+  `generated_only`. Then base-URL resolution, then `_required_kwargs`. That tried param `example`,
+  schema `example`, `default`, the first non-null `enum`, then `_DEMO_TARGETS` by wire name, with
+  no type check. Reasons were three sentences: `non-GET; not called live`,
+  `no usable base URL (<code>)` and `required-param values unavailable`.
+- **Petstore v3 under the old logic** (cached spec, sandbox stubbed): 3 live-called
+  (`/pet/findByStatus` with `status=available`, `/store/inventory`, `/user/login`), 4
+  `generated_only` for missing required values, 7 non-GET, 5 skipped at generation.
+- **The 4e-ii "4 GETs" was a miscount.** The selection code was byte-identical from `7fca3ec` to
+  `f922504`; `params.py` and `servers.py` were unchanged; `generate.py` got only the optional-body
+  fix. The 4e-ii record itself names 3 operations, reports 3 stub calls (all 3 failed), and its
+  "4 + 10" adds up to the same 14 generated operations as 3 + 11.
+- **Open-Meteo `/v1/forecast`.** `latitude` and `longitude` are both `{"type": "string"}`, with no
+  format, bounds, example, default or enum (`latitude` has only a description). No other required
+  params and no security. No tier yields a value, so the preset branch applies (the hook decision
+  below).
+- **Run status** (unchanged): `failed` if any verdict other than `generated_only` didn't pass. A
+  run with no live calls reads `succeeded`. Before 5a the frontend printed the raw reason.
+- **Budget arithmetic.** `generate.yml` has `timeout-minutes: 20`; the sandbox's host kill is 20 s.
+  Three real Open-Meteo calls through `run_in_sandbox` took 2.58, 2.26 and 2.66 s.
+  `MAX_LIVE_OPERATIONS = 10`: typical 10 × (2.5 + 1.0) = 35 s; worst case 10 × (20 + 1) = 210 s.
+  The corrector ladder's time is not bounded by this cap (an existing residual).
+- **Reach estimate** (cached corpus, 23 specs that load, no network, real generator plus the 5a
+  planner over generated GETs; `live` is before the budget). Of 290 generated GETs: 177
+  `requires_auth`, 0 `possibly_state_changing`, 75 `no_sample_value`, 38 live (27 of them have no
+  required params). All 52 required values that resolved came from `schema_example`; example,
+  examples, default, const, enum and constraint resolved 0, and no candidate was rejected.
+
+| spec | get_ops | get_generated | requires_auth | possibly_state_changing | no_sample_value | live | live_no_required | schema_example |
+|---|---|---|---|---|---|---|---|---|
+| open-meteo.com:forecast | 1 | 1 | 0 | 0 | 1 | 0 | 0 | 0 |
+| swagger.io:petstore3 | 8 | 7 | 4 | 0 | 2 | 1 | 1 | 0 |
+| 1password.local:connect | 11 | 8 | 7 | 0 | 0 | 1 | 1 | 0 |
+| 6-dot-authentiqio.appspot.com | 2 | 2 | 0 | 0 | 2 | 0 | 0 | 0 |
+| ably.net:control | 7 | 7 | 7 | 0 | 0 | 0 | 0 | 0 |
+| adobe.com:aem | 18 | 3 | 3 | 0 | 0 | 0 | 0 | 0 |
+| adyen.com:AccountService | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| amentum.space:aviation_radiation | 7 | 7 | 0 | 0 | 0 | 7 | 0 | 45 |
+| apache.org | 41 | 41 | 0 | 0 | 24 | 17 | 17 | 0 |
+| api.ebay.com:sell-account | 21 | 21 | 21 | 0 | 0 | 0 | 0 | 0 |
+| api2pdf.com | 3 | 2 | 2 | 0 | 0 | 0 | 0 | 0 |
+| apidapp.com | 17 | 17 | 10 | 0 | 2 | 5 | 5 | 0 |
+| apigee.local:registry | 14 | 12 | 0 | 0 | 12 | 0 | 0 | 0 |
+| apigee.net:marketcheck-cars | 68 | 67 | 67 | 0 | 0 | 0 | 0 | 0 |
+| apis.guru | 7 | 7 | 0 | 0 | 0 | 7 | 3 | 7 |
+| apisetu.gov.in:bajajallianz | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| apispot.io:whois | 6 | 5 | 5 | 0 | 0 | 0 | 0 | 0 |
+| apiz.ebay.com:sell-finances | 7 | 7 | 7 | 0 | 0 | 0 | 0 | 0 |
+| apple.com:sirikit-cloud-media | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| appwrite.io:client | 32 | 21 | 21 | 0 | 0 | 0 | 0 | 0 |
+| autodealerdata.com | 32 | 32 | 0 | 0 | 32 | 0 | 0 | 0 |
+| bbc.com | 25 | 23 | 23 | 0 | 0 | 0 | 0 | 0 |
+| bclaws.ca:bclaws | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| **TOTAL (23 specs)** | 335 | 290 | 177 | 0 | 75 | 38 | 27 | 52 |
+
+**What changed (`5cbb1d7`).**
+- **`backend/app/synthesis.py`** (new, pure): `plan_live_call(spec, path, method, params_table,
+  presets=None) -> LivePlan(kwargs, value_sources, skip_reason)`.
+  - Gates, in order: `not_get`, `requires_auth`, `possibly_state_changing`,
+    `no_sample_value:<local_name>`.
+  - Security: the operation's `security` overrides the global one, `[]` means none, and a `{}`
+    entry makes auth optional.
+  - Denylist: whole-word tokens after splitting on non-alphanumerics and camelCase. Adjacent token
+    pairs are also joined, so `signOut` matches `signout`; this goes slightly beyond the brief, and
+    on the conservative side. `presetValues` does not match.
+  - Tiers: `example`, `examples` (the first entry with an inline `value`), `schema_example`
+    (including a 3.1 schema `examples[0]`), `default`, `const`, `enum`, then `constraint`.
+    `constraint` is a midpoint (floored for integers), a single bound otherwise; exclusive bounds
+    work for integers only and make a number unusable.
+  - Values are type-checked (bool is not int, NaN/inf are rejected), and any control character or
+    more than 256 chars rejects a candidate. Arrays take a one-element list.
+  - When nothing wins, the first rejected tier is recorded as `<tier>_rejected` in the plan. No
+    type-based dummy values anywhere.
+- **`ci_runner.py`.**
+  - `_DEMO_TARGETS`, `_example_value` and `_required_kwargs` are deleted, replaced by
+    `DEMO_PRESETS`, `MAX_LIVE_OPERATIONS = 10` and `LIVE_CALL_PAUSE_SECONDS = 1.0`.
+  - `_live_validate` runs the plan first, then the base URL, then the budget. Calls are
+    sequential, paused 1 s per host, with no retries.
+  - Live verdicts gain `value_sources` (labels only). `generated_only` entries keep
+    `{endpoint, status, reason}`.
+  - A base-URL skip now reports the bare servers.py code (for example `server_url_invalid`).
+- **Frontend.** `report.ts` `generatedOnlyReason` maps every reason code, plus the two pre-5a
+  sentences still in old KV runs, to a sentence. It names the parameter only if it is a plain
+  identifier, and unknown input (including `constructor`) gets a fixed fallback, so raw text is
+  never shown. `ValidationReport.tsx` uses it.
+- **Coverage test.** `test_error_code_coverage.py` collects `synthesis.SKIP_*` and
+  `servers.SERVER_*` and fails if `GENERATED_ONLY_REASONS` lacks one.
+- **Mutation checks** (each restored afterwards):
+  - the `requires_auth` sentence removed: 1 coverage test fails;
+  - the auth gate disabled: 5 tests fail;
+  - bool accepted as int: 2 tests fail.
+
+**Existing tests changed (forced).**
+- `test_ci_runner.py`: `_kwargs_for` now calls `plan_live_call` (None on skip). The five
+  `test_required_kwargs_*` tests keep their expectations, except the demo test, which became
+  `..._uses_demo_preset_...`: values `52.52`/`13.41` floats → `"52.52"`/`"13.41"` strings (the spec
+  declares strings). The not-a-demo-hook test now checks `DEMO_PRESETS` carries no base URL.
+- `test_servers.py`:
+  - `OPEN_METEO_SHAPED` `info` → the real title/version (the preset key);
+  - the kwargs are now strings, with `value_sources` asserted;
+  - the unresolvable-base-URL reason `"no usable base URL (server_url_invalid)"` →
+    `"server_url_invalid"`.
+
+**Tests:** backend 586 → 693 (98 in `test_synthesis.py`, 9 coverage); frontend 52 → 57
+(`generatedOnlyReason`); worker 52. `tsc` and `next lint` are clean.
+
+**Receipts.** Real Docker sandbox, images rebuilt. Live calls went only to `api.open-meteo.com` and
+`petstore3.swagger.io` (asserted in the script). Specs came from the pinned cache. The stub
+corrector adapter records and raises; the real ladder runs above it.
+- **Open-Meteo:** `verified_pass`; `value_sources` {latitude: demo_preset, longitude: demo_preset};
+  kwargs `"52.52"`/`"13.41"`; log line `demo_preset applied: GET /v1/forecast`; 0 stub calls.
+- **Petstore v3:** 14 generated (5 skipped at generation), 0 stub calls in total.
+  - `/user/login` was live-called: `non_json_response`.
+  - `requires_auth`: `/pet/findByStatus`, `/pet/findByTags`, `/pet/{petId}` and
+    `/store/inventory`.
+  - `no_sample_value`: `/store/order/{orderId}` (`orderId`) and `/user/{username}` (`username`).
+  - 7 non-GETs are `not_get`.
+  - **Against 4g/4e-ii:** 3 live calls became 1. `/pet/findByStatus` (the "spec lies about
+    `name`" finding) and `/store/inventory` (HTTP 500) are now `requires_auth`, because Petstore
+    declares `petstore_auth` / `api_key` on them. The gate works as specified; the API wasn't
+    re-checked for those two.
+- **Synthetic gates spec through `ci_runner.run`** (sandbox stubbed):
+  - `/items`, `/items/{item-id}` (`{param_0: 50}`, constraint) and `/search`
+    (`{q: "relay", param_1: "en"}`, example + enum) were `verified_pass`;
+  - `POST /items` → `not_get`, `/private` → `requires_auth`, `/session/logout` →
+    `possibly_state_changing`, `/thing` → `no_sample_value:token`, `/elsewhere` →
+    `server_url_invalid`;
+  - `/public` (`{}` alternative, so eligible) → `live_budget_exceeded` at budget 3;
+  - pauses `[1.0, 1.0]`, 0 corrector calls.
+
+**Hook decision (owner decision, recorded).** No general tier can fill Open-Meteo's
+latitude/longitude, because they are bare strings. `_DEMO_TARGETS` is replaced by `DEMO_PRESETS`:
+- keyed by path `/v1/forecast` plus `info.title` "Open-Meteo Weather Forecast API" and
+  `info.version` "1.0";
+- not keyed by sha256, because the demo spec is fetched from a moving `main` branch and any
+  upstream edit would silently break a byte-hash key;
+- applied only to parameters no tier fills, and never past a gate;
+- labelled `demo_preset` in `value_sources` and in the Action log.
+
+The default demo's "verified live" therefore depends on one labelled preset.
+
+**CI:** run 40517828598 (code) green. The jobs API briefly reported `queued` after the run read
+`completed`; this settled to success/success/success.
+
+**Next piece (at the time):** 5b, the live corpus table.
 
 <!-- Copy the block above for each new session -->
