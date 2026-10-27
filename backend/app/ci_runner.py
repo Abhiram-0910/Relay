@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import math
 import os
 import sys
 import tempfile
@@ -36,13 +37,13 @@ from prance.util.formats import ParseError as PranceParseError
 from prance.util.formats import parse_spec
 from prance.util.url import ResolutionError as PranceResolutionError
 
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 from app.byok import ByokFetchError, ByokKeyMissingError, run_with_optional_byok
 from app.correct import self_correct
 from app.generate import generate_all_endpoints
-from app.params import merged_parameters
 from app.servers import resolve_base_url
+from app.synthesis import SKIP_LIVE_BUDGET_EXCEEDED, plan_live_call
 from app.sandbox import STATUS_PASS, SandboxError, SSRFError, resolve_and_validate_host, run_in_sandbox
 from app.spec_version import (UNRECOGNISED, SpecVersionInvalid, UnsupportedSpecVersion, check_spec_version,
                               spec_version_label)
@@ -151,13 +152,20 @@ def guarded_prance_resolve():
     finally:
         _prance_url.fetch_url_text = original
 
-# Demo hook: for spec targets whose required params have no example/default, supply known-good
-# values so the proven Open-Meteo flow works end to end. The base URL comes from the spec's own
-# `servers` (app.servers), not from here.
-# ponytail: hardcoded demo params; general param synthesis from the spec is piece 5.
-_DEMO_TARGETS = {
-    "/v1/forecast": {"params": {"latitude": 52.52, "longitude": 13.41}},
+# Owner decision (piece 5a): Open-Meteo's /v1/forecast declares latitude/longitude as bare
+# `type: string` with no example, default, enum or bounds, so no synthesis tier can fill them and the
+# default demo would never be live-called. These values apply only to that exact operation of that
+# spec (path + info.title + info.version: robust to upstream edits, unlike a byte hash of a spec
+# fetched from a moving branch), only for a parameter no tier fills, labelled `demo_preset`.
+# Values are strings because the spec declares strings. No base URL here: that comes from servers.
+DEMO_PRESETS = {
+    ("/v1/forecast", "Open-Meteo Weather Forecast API", "1.0"): {"latitude": "52.52", "longitude": "13.41"},
 }
+
+# Live-call budget (piece 5a step 0e): ~2.5 s per sandbox call measured, 20 s host kill worst case.
+# 10 x (20 s + 1 s pause) = 210 s worst case, well inside generate.yml's 20-minute job timeout.
+MAX_LIVE_OPERATIONS = 10
+LIVE_CALL_PAUSE_SECONDS = 1.0  # between live calls to the same host; no retries
 
 
 class Reporter:
@@ -221,45 +229,6 @@ def _code_files(generated: list[dict]) -> list[dict]:
     return files
 
 
-def _example_value(param: dict, schema: dict):
-    """A value for one parameter from the spec: example, then default, then (if neither) the first
-    non-null enum member. An array gets a list: its own example/default, else one synthesised item."""
-    value = param.get("example", schema.get("example", schema.get("default")))
-    if value is None:
-        members = [m for m in schema.get("enum") or [] if m is not None]
-        value = members[0] if members else None
-    types = schema.get("type") if isinstance(schema.get("type"), list) else [schema.get("type")]
-    if "array" in types:
-        if value is None:
-            item = _example_value({}, schema.get("items") or {})
-            return None if item is None else [item]
-        return value if isinstance(value, list) else [value]
-    return value
-
-
-def _required_kwargs(spec: dict, path: str, method: str, params: list[dict]) -> dict | None:
-    """Build kwargs for the REQUIRED params in the generator's parameter table (`params`, from
-    app.params' to_jsonable()), keyed by the generated method's local names. Values come from the
-    spec's example/default/enum (or the demo hook, by wire name). Returns None if any required param
-    can't be filled — that endpoint is reported generated-only, not live-called. Optional params are
-    omitted to keep the call minimal and predictable."""
-    path_item = spec["paths"][path]
-    raw = {(p.get("name"), p.get("in")): p for p in merged_parameters(path_item, path_item[method.lower()])}
-    demo_params = _DEMO_TARGETS.get(path, {}).get("params", {})
-    kwargs: dict = {}
-    for entry in params:
-        if not entry["required"]:
-            continue
-        param = raw[(entry["wire_name"], entry["location"])]
-        value = _example_value(param, param.get("schema", {}))
-        if value is None:
-            value = demo_params.get(entry["wire_name"])
-        if value is None:
-            return None
-        kwargs[entry["local_name"]] = value
-    return kwargs
-
-
 def _live_validate(spec: dict, generated: list[dict], spec_url: str, api_key: str | None = None,
                    provider: str | None = None, model: str | None = None) -> list[dict]:
     """Sandbox-validate each idempotent GET endpoint, self-correcting on failure. Returns a
@@ -270,22 +239,32 @@ def _live_validate(spec: dict, generated: list[dict], spec_url: str, api_key: st
     `provider`/`model` (BYOK) pick the corrector adapter and pin the model (no cross-model
     escalation on the user's key); both None → shared-key Gemini flash→pro path."""
     verdicts: list[dict] = []
+    info = spec.get("info") or {}
+    live_calls = 0
+    last_call_at: dict[str, float] = {}  # host -> monotonic time its last live call finished
     for item in generated:
         endpoint = item["endpoint"]
-        if endpoint["method"] != "GET":  # only live-call safe, idempotent GETs
-            verdicts.append({"endpoint": endpoint, "status": "generated_only",
-                             "reason": "non-GET; not called live"})
+        presets = DEMO_PRESETS.get((endpoint["path"], info.get("title"), info.get("version")))
+        plan = plan_live_call(spec, endpoint["path"], endpoint["method"], item["params"], presets)
+        if plan.skip_reason:  # a stable code, never spec text beyond a sanitised local name
+            verdicts.append({"endpoint": endpoint, "status": "generated_only", "reason": plan.skip_reason})
             continue
         base_url, base_url_problem = resolve_base_url(spec, endpoint["path"], endpoint["method"], spec_url)
         if base_url is None:
-            verdicts.append({"endpoint": endpoint, "status": "generated_only",
-                             "reason": f"no usable base URL ({base_url_problem})"})
+            verdicts.append({"endpoint": endpoint, "status": "generated_only", "reason": base_url_problem})
             continue
-        kwargs = _required_kwargs(spec, endpoint["path"], endpoint["method"], item["params"])
-        if kwargs is None:
+        if live_calls >= MAX_LIVE_OPERATIONS:
             verdicts.append({"endpoint": endpoint, "status": "generated_only",
-                             "reason": "required-param values unavailable"})
+                             "reason": SKIP_LIVE_BUDGET_EXCEEDED})
             continue
+        if "demo_preset" in plan.value_sources.values():
+            print(f"demo_preset applied: GET {endpoint['path']}")  # path is a DEMO_PRESETS key, not spec text
+        host = urlsplit(base_url).netloc
+        wait = last_call_at.get(host, -math.inf) + LIVE_CALL_PAUSE_SECONDS - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        live_calls += 1
+        kwargs = plan.kwargs
 
         with tempfile.TemporaryDirectory() as pkg_root:
             pkg = Path(pkg_root) / "client_pkg"
@@ -305,9 +284,10 @@ def _live_validate(spec: dict, generated: list[dict], spec_url: str, api_key: st
                 report = result.final_report
                 attempts = [a.__dict__ for a in result.attempts]
 
+        last_call_at[host] = time.monotonic()
         verdicts.append({"endpoint": endpoint, "status": report["status"],
                          "passed": report["status"] == STATUS_PASS, "attempts": attempts,
-                         "http_status": report.get("http_status")})
+                         "http_status": report.get("http_status"), "value_sources": plan.value_sources})
     return verdicts
 
 

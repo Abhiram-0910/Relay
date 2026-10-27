@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from app import sandbox
+from app import sandbox, servers, synthesis
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -39,9 +39,14 @@ CORRECTOR_CODES = _returned_strings(ROOT / "backend/app/correct.py", "_classify_
 SANDBOX_STATUSES = {v for k, v in vars(sandbox).items() if k.startswith("STATUS_") and isinstance(v, str)}
 ERROR_CODES = PIPELINE_CODES | CORRECTOR_CODES
 
+# generated_only reasons: stable codes from the live-call planner and base-URL resolution.
+REASON_CODES = ({v for k, v in vars(synthesis).items() if k.startswith("SKIP_") and isinstance(v, str)}
+                | {v for k, v in vars(servers).items() if k.startswith("SERVER_") and isinstance(v, str)})
+
 ERRORS_TS = _ts_record_keys(ROOT / "frontend/lib/errors.ts", "ERROR_MESSAGES")
 TONES = _ts_record_keys(ROOT / "frontend/lib/status.ts", "TONE_BY_STATUS")
 LABELS = _ts_record_keys(ROOT / "frontend/lib/status.ts", "LABELS")
+REASONS_TS = _ts_record_keys(ROOT / "frontend/lib/report.ts", "GENERATED_ONLY_REASONS")
 
 
 def test_the_code_lists_were_actually_found() -> None:
@@ -61,3 +66,13 @@ def test_every_error_code_has_a_message_tone_and_label(code: str) -> None:
 @pytest.mark.parametrize("status", sorted(SANDBOX_STATUSES | {"generated_only"}))
 def test_every_endpoint_status_has_a_tone_and_label(status: str) -> None:
     assert status in TONES and status in LABELS, f"{status} missing from status.ts"
+
+
+def test_the_reason_codes_were_actually_found() -> None:
+    assert {"not_get", "requires_auth", "possibly_state_changing", "no_sample_value",
+            "live_budget_exceeded", "server_url_invalid"} <= REASON_CODES
+
+
+@pytest.mark.parametrize("code", sorted(REASON_CODES))
+def test_every_generated_only_reason_has_a_sentence(code: str) -> None:
+    assert code in REASONS_TS, f"{code} has no report.ts GENERATED_ONLY_REASONS sentence"

@@ -15,7 +15,8 @@ from prance.util.url import ResolutionError as PranceResolutionError
 
 from app import ci_runner
 from app.byok import ByokFetchError, ByokKeyMissingError
-from app.ci_runner import Reporter, _code_files, _required_kwargs
+from app.ci_runner import Reporter, _code_files
+from app.synthesis import plan_live_call
 from app.sandbox import SandboxError, SSRFError
 
 
@@ -29,24 +30,26 @@ def test_resolve_base_url_prefers_spec_servers() -> None:
 
 def test_resolve_base_url_falls_back_to_the_spec_origin_not_a_demo_hook() -> None:
     """Empty servers mean "/" per OpenAPI: the spec document's own origin. The Open-Meteo base URL
-    now comes from that spec's path-item servers, never from _DEMO_TARGETS."""
+    now comes from that spec's path-item servers, never from DEMO_PRESETS."""
     from app.servers import resolve_base_url
 
     spec = {"servers": [], "paths": {}}
     assert resolve_base_url(spec, "/v1/forecast", "get", "https://specs.example/a/o.json") == (
         "https://specs.example", None)
-    assert "base_url" not in ci_runner._DEMO_TARGETS["/v1/forecast"]
+    assert all("base_url" not in values for values in ci_runner.DEMO_PRESETS.values())
 
 
-def _kwargs_for(parameters: list[dict], path: str = "/x", path_item_parameters: list[dict] = ()):
-    """_required_kwargs over the generator's own parameter table for this operation."""
+def _kwargs_for(parameters: list[dict], path: str = "/x", path_item_parameters: list[dict] = (),
+                presets: dict | None = None):
+    """plan_live_call's kwargs (None when it skips) over the generator's own parameter table."""
     from app.naming import _safe_identifier
     from app.params import plan_parameters
 
     path_item = {"get": {"parameters": parameters}, "parameters": list(path_item_parameters)}
     table = plan_parameters(path_item, path_item["get"], alias_prefix="Op",
                             sanitise=_safe_identifier).to_jsonable()
-    return _required_kwargs({"paths": {path: path_item}}, path, "get", table)
+    plan = plan_live_call({"paths": {path: path_item}}, path, "get", table, presets)
+    return None if plan.skip_reason else plan.kwargs
 
 
 def test_required_kwargs_from_example_and_default() -> None:
@@ -57,12 +60,13 @@ def test_required_kwargs_from_example_and_default() -> None:
     ]) == {"a": 5, "b": "hi"}
 
 
-def test_required_kwargs_uses_demo_hook_for_unfillable_required() -> None:
-    # latitude/longitude are required with no example -> filled from the demo registry.
+def test_required_kwargs_uses_demo_preset_for_unfillable_required() -> None:
+    # latitude/longitude are required with no example -> filled from the demo preset (strings, as declared).
+    preset = ci_runner.DEMO_PRESETS[("/v1/forecast", "Open-Meteo Weather Forecast API", "1.0")]
     assert _kwargs_for([
         {"name": "latitude", "in": "query", "required": True, "schema": {"type": "string"}},
         {"name": "longitude", "in": "query", "required": True, "schema": {"type": "string"}},
-    ], path="/v1/forecast") == {"latitude": 52.52, "longitude": 13.41}
+    ], path="/v1/forecast", presets=preset) == {"latitude": "52.52", "longitude": "13.41"}
 
 
 def test_required_kwargs_returns_none_when_unsynthesizable() -> None:

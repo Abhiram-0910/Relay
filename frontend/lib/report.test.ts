@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { httpStatusNote, problemSummary, skippedSummary } from "./report";
+import { generatedOnlyReason, httpStatusNote, problemSummary, skippedSummary } from "./report";
 
 describe("skippedSummary", () => {
   it("does not claim a single cause for every skip", () => {
@@ -57,5 +57,37 @@ describe("problemSummary", () => {
     const counted = (problemSummary(statuses).match(/\d+/g) ?? []).reduce((n, d) => n + Number(d), 0);
     expect(counted).toBe(runFailing);
     expect(problemSummary(statuses)).toBe("2 failed · 3 need attention");
+  });
+});
+
+describe("generatedOnlyReason", () => {
+  it("maps every backend reason code to a sentence", () => {
+    for (const code of ["not_get", "requires_auth", "possibly_state_changing", "live_budget_exceeded",
+                        "server_url_invalid", "server_variable_invalid", "server_url_missing_host"]) {
+      const text = generatedOnlyReason(code);
+      expect(text).not.toBe("Generated, but not called live.");
+      expect(text).not.toContain(code);
+    }
+  });
+
+  it("names the parameter for no_sample_value", () => {
+    expect(generatedOnlyReason("no_sample_value:latitude")).toBe("No sample value for the required parameter latitude.");
+  });
+
+  it("never echoes a name that isn't a plain identifier", () => {
+    for (const bad of ["no_sample_value:<script>", "no_sample_value:", "no_sample_value:a b", `no_sample_value:${"a".repeat(65)}`]) {
+      expect(generatedOnlyReason(bad)).toBe("No sample value for a required parameter.");
+    }
+  });
+
+  it("maps the pre-5a sentences still stored in old runs", () => {
+    expect(generatedOnlyReason("non-GET; not called live")).toBe(generatedOnlyReason("not_get"));
+    expect(generatedOnlyReason("required-param values unavailable")).toMatch(/No sample values/);
+  });
+
+  it("falls back for anything unknown, never showing raw text", () => {
+    for (const unknown of ["something_new", "no usable base URL (server_url_invalid)", "constructor", "toString", "x:y"]) {
+      expect(generatedOnlyReason(unknown)).toBe("Generated, but not called live.");
+    }
   });
 });

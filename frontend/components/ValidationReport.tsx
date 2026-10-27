@@ -1,6 +1,6 @@
 import { StatusBadge } from "@/components/StatusBadge";
 import { suggestsByok } from "@/lib/errors";
-import { httpStatusNote, problemSummary, skippedSummary } from "@/lib/report";
+import { generatedOnlyReason, httpStatusNote, problemSummary, skippedSummary } from "@/lib/report";
 import { labelOf, styleOf } from "@/lib/status";
 import type { RunResult, ValidatedEndpoint } from "@/lib/types";
 
@@ -23,7 +23,7 @@ function EndpointRow({ v }: { v: ValidatedEndpoint }) {
           <StatusBadge status={v.status} />
         </span>
       </div>
-      {v.reason && <p className="mt-2 text-xs text-muted">{v.reason}</p>}
+      {v.reason && <p className="mt-2 text-xs text-muted">{generatedOnlyReason(v.reason)}</p>}
       {attempts.length > 0 && (
         <div className="mt-2 border-t border-white/5 pt-2">
           <p className="text-xs text-muted">

@@ -157,7 +157,7 @@ def test_reasons_never_contain_spec_text() -> None:
 # --- through ci_runner ---------------------------------------------------------------------------
 
 OPEN_METEO_SHAPED = {
-    "openapi": "3.1.0", "info": {"title": "Open-Meteo APIs", "version": "1"},
+    "openapi": "3.1.0", "info": {"title": "Open-Meteo Weather Forecast API", "version": "1.0"},  # the DEMO_PRESETS key
     "paths": {"/v1/forecast": {
         "servers": [{"url": "https://api.open-meteo.com"}, {"url": "https://customer-api.open-meteo.com"}],
         "get": {"operationId": "getForecast", "parameters": [
@@ -189,7 +189,8 @@ def test_open_meteo_path_servers_resolve_with_no_hook_base_url(monkeypatch) -> N
     result, call_specs = _run_with(monkeypatch, OPEN_METEO_SHAPED,
                                    "https://raw.githubusercontent.com/open-meteo/open-meteo/main/openapi/forecast.yml")
     assert [c["base_url"] for c in call_specs] == ["https://api.open-meteo.com"]
-    assert call_specs[0]["kwargs"] == {"latitude": 52.52, "longitude": 13.41}  # demo params still apply
+    assert call_specs[0]["kwargs"] == {"latitude": "52.52", "longitude": "13.41"}  # demo preset still applies
+    assert result["validated"][0]["value_sources"] == {"latitude": "demo_preset", "longitude": "demo_preset"}
     assert result["validated"][0]["status"] == "verified_pass"
 
 
@@ -208,4 +209,4 @@ def test_unresolvable_base_url_is_generated_only_and_never_reaches_the_sandbox(m
     result, call_specs = _run_with(monkeypatch, spec, "https://final.example.org/openapi.json")
     assert call_specs == []
     assert result["validated"] == [{"endpoint": {"method": "GET", "path": "/v1/forecast"},
-                                    "status": "generated_only", "reason": "no usable base URL (server_url_invalid)"}]
+                                    "status": "generated_only", "reason": "server_url_invalid"}]
