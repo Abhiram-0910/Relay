@@ -3,7 +3,6 @@ import { errorMessage } from "./errors";
 import type {
   CodeBundle,
   CreateRunResponse,
-  ModelOption,
   ModelsResponse,
   RateLimitInfo,
   RunSnapshot,
@@ -48,10 +47,10 @@ export async function createRun(specUrl: string, byok?: ByokState): Promise<Crea
   return (await res.json()) as CreateRunResponse;
 }
 
-/** Live model list for a provider, fetched through the Worker with the user's key. A provider
- * 401/403 comes back as 401 from the Worker → KeyRejectedError, so the UI can say "key rejected"
- * up front rather than after a wasted run. */
-export async function fetchModels(provider: string, apiKey: string): Promise<ModelOption[]> {
+/** The Worker's ranked model ladder for this key (it fetches and ranks the key's live list). A
+ * provider 401/403 comes back as 401 from the Worker → KeyRejectedError, so the UI can say "key
+ * rejected" up front rather than after a wasted run. */
+export async function fetchModels(provider: string, apiKey: string): Promise<ModelsResponse> {
   const res = await fetch(`${requireBase()}/api/models`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -62,7 +61,7 @@ export async function fetchModels(provider: string, apiKey: string): Promise<Mod
     const errBody = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(errorMessage(errBody.error));
   }
-  return ((await res.json()) as ModelsResponse).models ?? [];
+  return (await res.json()) as ModelsResponse;
 }
 
 /** Poll one run. Returns null if the run id is unknown/expired (404). */

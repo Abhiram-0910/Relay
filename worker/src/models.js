@@ -1,7 +1,9 @@
 // worker/src/models.js
 //
-// POST /api/models {provider, apiKey} — live model-list fetch for the BYOK provider dropdown
-// (Step 2, see ARCHITECTURE.md). Worker-side, NOT browser-direct: Anthropic/OpenAI don't serve
+// POST /api/models {provider, apiKey} -> {provider, ladder:[{id,tier}], default_index}. The Worker
+// fetches the key's live model list, filters it to chat-capable models (below), and ranks it into a
+// small->flagship ladder (modelRank.js, Phase 3 piece 8). The full list never leaves the Worker.
+// (Originally Step 2, see ARCHITECTURE.md.) Worker-side, NOT browser-direct: Anthropic/OpenAI don't serve
 // permissive CORS to browser origins, and this reuses the same browser->Worker HTTPS trust
 // boundary the BYOK key already crosses.
 //
@@ -18,6 +20,7 @@
 // exact same per-IP daily mechanism as POST /api/runs (rateLimit.js), not a bespoke one.
 
 import { checkAndBumpRateLimit } from "./rateLimit.js";
+import { rankModels } from "./modelRank.js";
 
 const MODELS_CACHE_TTL_SECONDS = 3600; // 1h — model lists change rarely; the cache is the throttle
 const MODELS_FETCH_TIMEOUT_MS = 10000;
@@ -71,7 +74,8 @@ const bearer = (apiKey) => ({ Authorization: `Bearer ${apiKey}` });
 const stripModelsPrefix = (name) => String(name ?? "").replace(/^models\//, "");
 
 // Per provider: how to build the list-models request from the user's key, and how to normalize the
-// provider-specific response into the uniform { id, label } shape the frontend consumes.
+// provider-specific response into the uniform { id, label, created? } shape rankModels consumes
+// (created: epoch seconds, a within-tier tie-break; Gemini's list has none).
 const PROVIDERS = {
   gemini: {
     // Step 6 security review (F9): the key used to ride in the URL query string (?key=...)
@@ -92,21 +96,25 @@ const PROVIDERS = {
     build: (apiKey) => ({ url: "https://api.openai.com/v1/models", headers: bearer(apiKey) }),
     normalize: (body) =>
       (body.data ?? [])
-        .map((m) => String(m.id))
-        .filter(isOpenAiChatModel)
-        .map((id) => ({ id, label: id })),
+        .filter((m) => isOpenAiChatModel(String(m.id)))
+        .map((m) => ({ id: String(m.id), label: String(m.id), created: m.created })),
   },
   grok: {
     // OpenAI-shaped; all xAI models are chat models, so no chat filter needed.
     build: (apiKey) => ({ url: "https://api.x.ai/v1/models", headers: bearer(apiKey) }),
-    normalize: (body) => (body.data ?? []).map((m) => ({ id: m.id, label: m.id })),
+    normalize: (body) => (body.data ?? []).map((m) => ({ id: m.id, label: m.id, created: m.created })),
   },
   anthropic: {
+    // limit=1000: the documented maximum page size (1-1000, default 20). The list is newest-first and
+    // only one page is read, so the default 20 could drop older-but-current models.
     build: (apiKey) => ({
-      url: "https://api.anthropic.com/v1/models",
+      url: "https://api.anthropic.com/v1/models?limit=1000",
       headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
     }),
-    normalize: (body) => (body.data ?? []).map((m) => ({ id: m.id, label: m.display_name || m.id })),
+    normalize: (body) =>
+      (body.data ?? []).map((m) => ({
+        id: m.id, label: m.display_name || m.id, created: Math.floor(Date.parse(m.created_at) / 1000) || 0,
+      })),
   },
   openrouter: {
     build: (apiKey) => ({ url: "https://openrouter.ai/api/v1/models", headers: bearer(apiKey) }),
@@ -120,7 +128,7 @@ const PROVIDERS = {
       return (body.data ?? [])
         .filter(structuredCapable)
         .slice(0, OPENROUTER_MAX_MODELS)
-        .map((m) => ({ id: m.id, label: m.name || m.id }));
+        .map((m) => ({ id: m.id, label: m.name || m.id, created: m.created }));
     },
   },
 };
@@ -153,10 +161,10 @@ export async function handleModelsFetch(request, env) {
     );
   }
 
-  // Provider-scoped cache — the apiKey is deliberately not part of this key.
+  // Provider-scoped cache of the normalized list — the apiKey is deliberately not part of this key.
   const cacheKey = `models:${provider}`;
   const cached = await env.RELAY_KV.get(cacheKey, "json");
-  if (cached) return json(cached, 200); // hit -> no provider call
+  if (cached) return ladderResponse(provider, cached.models); // hit -> no provider call
 
   const { url, headers } = cfg.build(apiKey);
   let resp;
@@ -170,6 +178,11 @@ export async function handleModelsFetch(request, env) {
     // Clean pass-through so the frontend can say "key rejected". Never cached.
     return json({ error: "key_rejected", provider }, 401);
   }
+  if (provider === "anthropic" && resp.status === 400 && (await anthropicNeedsWorkspace(resp))) {
+    // A key not scoped to one workspace (live, 2026-11-08). Fixed code only: the provider's text is
+    // read to pick the code and is never forwarded, logged or echoed.
+    return json({ error: "provider_key_needs_workspace", provider }, 400);
+  }
   if (!resp.ok) {
     return json({ error: "provider_error", provider, status: resp.status }, 502);
   }
@@ -181,8 +194,27 @@ export async function handleModelsFetch(request, env) {
     return json({ error: "provider_bad_response", provider }, 502);
   }
 
-  const result = { models: cfg.normalize(data) };
+  const models = cfg.normalize(data);
   // Cache ONLY the normalized, provider-scoped list — the apiKey is never in the key or the value.
-  await env.RELAY_KV.put(cacheKey, JSON.stringify(result), { expirationTtl: MODELS_CACHE_TTL_SECONDS });
-  return json(result, 200);
+  await env.RELAY_KV.put(cacheKey, JSON.stringify({ models }), { expirationTtl: MODELS_CACHE_TTL_SECONDS });
+  return ladderResponse(provider, models);
+}
+
+// Anthropic's 400 for an unscoped key: {error:{type:"invalid_request_error", message:"...must include
+// the anthropic-workspace-id header..."}}. Anything else (or an unreadable body) is not this case.
+async function anthropicNeedsWorkspace(resp) {
+  try {
+    const err = (await resp.json())?.error;
+    return err?.type === "invalid_request_error" && typeof err.message === "string" &&
+      err.message.includes("anthropic-workspace-id");
+  } catch {
+    return false;
+  }
+}
+
+// Only the ranked ladder goes back to the browser — never the full list, never the key.
+function ladderResponse(provider, models) {
+  const { ladder, default_index } = rankModels(provider, models);
+  if (ladder.length === 0) return json({ error: "no_suitable_model", provider }, 422);
+  return json({ provider, ladder, default_index }, 200);
 }

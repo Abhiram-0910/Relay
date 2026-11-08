@@ -20,6 +20,18 @@ describe("errorMessage — code → plain language, never raw", () => {
     expect(errorMessage("byok_fetch_failed")).toMatch(/couldn't be passed/i);
   });
 
+  it("maps provider_key_needs_workspace to its own message, with no bring-your-own-key hint", () => {
+    expect(errorMessage("provider_key_needs_workspace")).toBe(
+      "Anthropic says this API key isn't tied to a single workspace. Create an API key inside one workspace in the Anthropic Console and use that key.",
+    );
+    expect(suggestsByok("provider_key_needs_workspace")).toBe(false);
+  });
+
+  it("maps no_suitable_model to its own message, with no bring-your-own-key hint", () => {
+    expect(errorMessage("no_suitable_model")).toMatch(/couldn't match any of this key's models/);
+    expect(suggestsByok("no_suitable_model")).toBe(false);
+  });
+
   it("maps model_unsupported to its own pick-another-model message", () => {
     expect(errorMessage("model_unsupported")).toBe(
       "That model can't be used for auto-fix: it doesn't support this request format, or your key can't access it. Pick a different model.",

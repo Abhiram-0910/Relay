@@ -34,6 +34,11 @@ function req(bodyObj, ip) {
   });
 }
 
+// The filtered, normalized list is no longer returned (piece 8: the route answers with a ranked
+// ladder only); it lives in the provider-scoped cache, which is where the filter tests read it now.
+const cachedIds = async (env, provider) =>
+  (await env.RELAY_KV.get(`models:${provider}`, "json")).models.map((m) => m.id);
+
 // A stand-in for the provider's HTTP Response — the handler only touches status/ok/json().
 function fakeResponse(status, body) {
   return { status, ok: status >= 200 && status < 300, json: async () => body };
@@ -96,11 +101,11 @@ describe("handleModelsFetch — rate limit", () => {
 
     const first = await handleModelsFetch(req({ provider: "gemini", apiKey: "sk-a" }, "9.9.9.9"), env);
     expect(first.status).toBe(200);
-    const second = await handleModelsFetch(req({ provider: "openai", apiKey: "sk-b" }, "9.9.9.9"), env);
+    const second = await handleModelsFetch(req({ provider: "gemini", apiKey: "sk-b" }, "9.9.9.9"), env);
     expect(second.status).toBe(200);
 
     fetchMock.mockClear();
-    const third = await handleModelsFetch(req({ provider: "openai", apiKey: "sk-c" }, "9.9.9.9"), env);
+    const third = await handleModelsFetch(req({ provider: "gemini", apiKey: "sk-c" }, "9.9.9.9"), env);
     expect(third.status).toBe(429);
     expect((await third.json()).error).toBe("rate_limited");
     expect(fetchMock).not.toHaveBeenCalled(); // blocked before ever reaching the provider
@@ -116,14 +121,16 @@ describe("handleModelsFetch — rate limit", () => {
 });
 
 describe("handleModelsFetch — cache", () => {
-  it("cache HIT returns the cached list without calling the provider", async () => {
+  it("cache HIT ranks the cached list without calling the provider", async () => {
     const env = makeEnv();
     const cached = { models: [{ id: "gemini-3.5-flash", label: "Gemini 3.5 Flash" }] };
     await env.RELAY_KV.put("models:gemini", JSON.stringify(cached));
 
     const res = await handleModelsFetch(req({ provider: "gemini", apiKey: "sk-user" }), env);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual(cached);
+    expect(await res.json()).toEqual({
+      provider: "gemini", ladder: [{ id: "gemini-3.5-flash", tier: "balanced" }], default_index: 0,
+    });
     expect(fetchMock).not.toHaveBeenCalled(); // the whole point of the cache
   });
 
@@ -133,14 +140,12 @@ describe("handleModelsFetch — cache", () => {
 
     const res = await handleModelsFetch(req({ provider: "gemini", apiKey: "sk-user" }), env);
     expect(res.status).toBe(200);
-    const body = await res.json();
-    // Only the generateContent-capable model survives; name prefix stripped, label kept.
-    expect(body.models).toEqual([{ id: "gemini-3.5-flash", label: "Gemini 3.5 Flash" }]);
+    expect((await res.json()).ladder).toEqual([{ id: "gemini-3.5-flash", tier: "balanced" }]);
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
-    // The cache is now populated with the SAME normalized payload.
+    // The cache holds the normalized list: only the generateContent-capable model, prefix stripped.
     const stored = await env.RELAY_KV.get("models:gemini", "json");
-    expect(stored).toEqual(body);
+    expect(stored).toEqual({ models: [{ id: "gemini-3.5-flash", label: "Gemini 3.5 Flash" }] });
   });
 
   it("provider-scoped cache never contains the apiKey (key-scoped it is not)", async () => {
@@ -196,17 +201,16 @@ describe("handleModelsFetch — per-provider request shape", () => {
     fetchMock.mockResolvedValue(fakeResponse(200, {
       data: [{ id: "gpt-5" }, { id: "text-embedding-3-large" }, { id: "o3" }, { id: "dall-e-3" }],
     }));
-    const res = await handleModelsFetch(req({ provider: "openai", apiKey: "sk-oai" }), env);
-    const ids = (await res.json()).models.map((m) => m.id);
-    expect(ids).toEqual(["gpt-5", "o3"]); // embeddings + image models filtered out
+    await handleModelsFetch(req({ provider: "openai", apiKey: "sk-oai" }), env);
+    expect(await cachedIds(env, "openai")).toEqual(["gpt-5", "o3"]); // embeddings + image models filtered out
     expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe("Bearer sk-oai");
   });
 
   it("openai filter over the real 133-id /v1/models capture", async () => {
     const env = makeEnv();
     fetchMock.mockResolvedValue(fakeResponse(200, { data: OPENAI_MODEL_IDS.map((id) => ({ id })) }));
-    const res = await handleModelsFetch(req({ provider: "openai", apiKey: "sk-oai" }), env);
-    const kept = new Set((await res.json()).models.map((m) => m.id));
+    await handleModelsFetch(req({ provider: "openai", apiKey: "sk-oai" }), env);
+    const kept = new Set(await cachedIds(env, "openai"));
     const excluded = OPENAI_MODEL_IDS.filter((id) => !kept.has(id));
 
     const nonChat = OPENAI_MODEL_IDS.filter((id) => DEFINITIVE_NON_CHAT.test(id));
@@ -230,8 +234,9 @@ describe("handleModelsFetch — per-provider request shape", () => {
     fetchMock.mockResolvedValue(fakeResponse(200, {
       data: [{ id: "claude-opus-4-6", display_name: "Claude Opus 4.6" }],
     }));
-    const res = await handleModelsFetch(req({ provider: "anthropic", apiKey: "sk-ant" }), env);
-    expect((await res.json()).models).toEqual([{ id: "claude-opus-4-6", label: "Claude Opus 4.6" }]);
+    await handleModelsFetch(req({ provider: "anthropic", apiKey: "sk-ant" }), env);
+    expect((await env.RELAY_KV.get("models:anthropic", "json")).models).toEqual(
+      [{ id: "claude-opus-4-6", label: "Claude Opus 4.6", created: 0 }]); // no created_at in this stub
     const headers = fetchMock.mock.calls[0][1].headers;
     expect(headers["x-api-key"]).toBe("sk-ant");
     expect(headers["anthropic-version"]).toBe("2023-06-01");
@@ -246,9 +251,8 @@ describe("handleModelsFetch — per-provider request shape", () => {
         { id: "c/unknown", name: "C Unknown" }, // no field -> kept (benefit of the doubt)
       ],
     }));
-    const res = await handleModelsFetch(req({ provider: "openrouter", apiKey: "sk-or" }), env);
-    const ids = (await res.json()).models.map((m) => m.id);
-    expect(ids).toEqual(["a/chat", "c/unknown"]);
+    await handleModelsFetch(req({ provider: "openrouter", apiKey: "sk-or" }), env);
+    expect(await cachedIds(env, "openrouter")).toEqual(["a/chat", "c/unknown"]);
   });
 
   it("openrouter caps at OPENROUTER_MAX_MODELS (300) after the capability filter", async () => {
@@ -257,18 +261,17 @@ describe("handleModelsFetch — per-provider request shape", () => {
       { id: `p/model-${i}`, name: `Model ${i}`, supported_parameters: ["tools"] }
     ));
     fetchMock.mockResolvedValue(fakeResponse(200, { data }));
-    const res = await handleModelsFetch(req({ provider: "openrouter", apiKey: "sk-or" }), env);
-    const models = (await res.json()).models;
-    expect(models).toHaveLength(300);
-    expect(models[0].id).toBe("p/model-0"); // slice keeps the front of the (already-filtered) list
+    await handleModelsFetch(req({ provider: "openrouter", apiKey: "sk-or" }), env);
+    const ids = await cachedIds(env, "openrouter");
+    expect(ids).toHaveLength(300);
+    expect(ids[0]).toBe("p/model-0"); // slice keeps the front of the (already-filtered) list
   });
 
   it("grok uses Bearer auth against api.x.ai, no chat-prefix filter (all models kept)", async () => {
     const env = makeEnv();
     fetchMock.mockResolvedValue(fakeResponse(200, { data: [{ id: "grok-5" }, { id: "grok-5-mini" }] }));
-    const res = await handleModelsFetch(req({ provider: "grok", apiKey: "sk-grok" }), env);
-    const ids = (await res.json()).models.map((m) => m.id);
-    expect(ids).toEqual(["grok-5", "grok-5-mini"]); // unlike openai, no family filter to drop anything
+    await handleModelsFetch(req({ provider: "grok", apiKey: "sk-grok" }), env);
+    expect(await cachedIds(env, "grok")).toEqual(["grok-5", "grok-5-mini"]); // unlike openai, no family filter to drop anything
     const [url, opts] = fetchMock.mock.calls[0];
     expect(url).toBe("https://api.x.ai/v1/models");
     expect(opts.headers.Authorization).toBe("Bearer sk-grok");
@@ -306,5 +309,85 @@ describe("handleModelsFetch — network/response failures (Step 4)", () => {
     expect(res.status).toBe(502);
     expect((await res.json()).error).toBe("provider_bad_response");
     expect(await env.RELAY_KV.get("models:openrouter")).toBeNull();
+  });
+});
+
+// Phase 3 piece 8: Anthropic's list call. A key not scoped to one workspace got a 400 live
+// (2026-11-08); that one case maps to a fixed code, and no provider text ever leaves the Worker.
+describe("handleModelsFetch — anthropic request shape and workspace 400", () => {
+  let fetchMock;
+  beforeEach(() => { fetchMock = vi.fn(); vi.stubGlobal("fetch", fetchMock); });
+  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+  const CANARY = "CANARY-provider-text-7f3a";
+  const WORKSPACE_400 = { type: "error", error: { type: "invalid_request_error",
+    message: `This API key is not scoped to a workspace, so this request must include the anthropic-workspace-id header ${CANARY}` } };
+  const call = async (status, body, env = makeEnv()) => {
+    fetchMock.mockResolvedValue(fakeResponse(status, body));
+    const res = await handleModelsFetch(req({ provider: "anthropic", apiKey: "sk-ant-key" }), env);
+    return { res, text: await res.text(), env };
+  };
+
+  it("pins the request: GET /v1/models?limit=1000 with exactly x-api-key + anthropic-version", async () => {
+    await call(200, { data: [] });
+    const [url, opts] = fetchMock.mock.calls[0];
+    const u = new URL(url);
+    expect(`${u.origin}${u.pathname}`).toBe("https://api.anthropic.com/v1/models");
+    expect([...u.searchParams]).toEqual([["limit", "1000"]]);
+    expect(opts.method).toBe("GET");
+    expect(opts.headers).toEqual({ "x-api-key": "sk-ant-key", "anthropic-version": "2023-06-01" });
+  });
+
+  it("the workspace 400 -> provider_key_needs_workspace, {error, provider} only, not cached", async () => {
+    const { res, text, env } = await call(400, WORKSPACE_400);
+    expect(res.status).toBe(400);
+    expect(JSON.parse(text)).toEqual({ error: "provider_key_needs_workspace", provider: "anthropic" });
+    expect(await env.RELAY_KV.get("models:anthropic")).toBeNull();
+  });
+
+  it("a 400 with other text, or another error type, stays provider_error", async () => {
+    for (const body of [
+      { error: { type: "invalid_request_error", message: `limit out of range ${CANARY}` } },
+      { error: { type: "permission_error", message: "anthropic-workspace-id" } },
+      "not json at all",
+    ]) {
+      const { res, text } = await call(400, body);
+      expect(res.status).toBe(502);
+      expect(JSON.parse(text)).toEqual({ error: "provider_error", provider: "anthropic", status: 400 });
+    }
+  });
+
+  it("an unreadable 400 body stays provider_error", async () => {
+    fetchMock.mockResolvedValue({ status: 400, ok: false, json: async () => { throw new SyntaxError("x"); } });
+    const res = await handleModelsFetch(req({ provider: "anthropic", apiKey: "sk-ant-key" }), makeEnv());
+    expect((await res.json()).error).toBe("provider_error");
+  });
+
+  it("provider text (canary) never reaches the response, the cache or the console", async () => {
+    const spies = ["log", "info", "warn", "error", "debug"].map((m) => vi.spyOn(console, m).mockImplementation(() => {}));
+    const env = makeEnv();
+    const outputs = [];
+    for (const [status, body] of [[400, WORKSPACE_400], [400, { error: { type: "invalid_request_error", message: CANARY } }],
+                                  [401, { error: { message: CANARY } }], [503, { error: { message: CANARY } }]]) {
+      outputs.push((await call(status, body, env)).text);
+    }
+    expect(outputs.join("\n")).not.toContain(CANARY);
+    expect(JSON.stringify([...env.RELAY_KV.store.entries()])).not.toContain(CANARY);
+    expect(spies.flatMap((s) => s.mock.calls).map((c) => JSON.stringify(c)).join("\n")).not.toContain(CANARY);
+  });
+
+  it("401 and 5xx are unchanged: key_rejected and provider_error", async () => {
+    const r401 = await call(401, WORKSPACE_400); // workspace text on a 401 is still just a rejected key
+    expect(r401.res.status).toBe(401);
+    expect(JSON.parse(r401.text)).toEqual({ error: "key_rejected", provider: "anthropic" });
+    const r503 = await call(503, WORKSPACE_400);
+    expect(r503.res.status).toBe(502);
+    expect(JSON.parse(r503.text)).toEqual({ error: "provider_error", provider: "anthropic", status: 503 });
+  });
+
+  it("only anthropic gets the mapping: the same 400 from openai stays provider_error", async () => {
+    fetchMock.mockResolvedValue(fakeResponse(400, WORKSPACE_400));
+    const res = await handleModelsFetch(req({ provider: "openai", apiKey: "sk-oai-key" }), makeEnv());
+    expect((await res.json()).error).toBe("provider_error");
   });
 });

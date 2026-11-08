@@ -14,7 +14,6 @@ export const PROVIDER_OPTIONS: { value: Provider; label: string }[] = [
 ];
 
 export const MIN_API_KEY_LEN = 8; // matches the Worker's storeByokKey floor
-export const MODEL_FETCH_DEBOUNCE_MS = 500;
 
 export interface ByokState {
   provider: Provider | "";
@@ -33,10 +32,15 @@ export class KeyRejectedError extends Error {
   }
 }
 
-/** The guard that keeps the debounced model-fetch from firing on every keystroke of a half-typed
- * key: only once a provider is chosen AND the key is plausibly complete. */
+/** Enables "Find a model": only once a provider is chosen AND the key is plausibly complete. */
 export function canFetchModels(provider: string, apiKey: string): boolean {
   return provider !== "" && apiKey.trim().length >= MIN_API_KEY_LEN;
+}
+
+/** True while the BYOK section is started (provider chosen or key typed) but no model is confirmed.
+ * The run is blocked then: submitting would silently fall back to the shared key. */
+export function byokBlocksRun(byok: ByokState): boolean {
+  return (byok.provider !== "" || byok.apiKey.trim() !== "") && byok.model === "";
 }
 
 export interface RunPayload {

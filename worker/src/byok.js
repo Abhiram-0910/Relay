@@ -21,6 +21,8 @@
 //      "no DB, run state namespaced by run id" description) — rename to match
 //      the real binding name if it differs.
 
+import { isValidModelId } from "./modelRank.js";
+
 const BYOK_TTL_SECONDS = 240; // KV minimum is 60s. Was 120s, but a genuinely
                                // cold `make sandbox-build` in the Action can
                                // push key-fetch past that ceiling, silently
@@ -82,9 +84,11 @@ export async function storeByokKey(env, runId, apiKey, provider, model) {
     // step would have to guess about.
     throw new Error("invalid apiKey");
   }
-  if (model != null && (typeof model !== "string" || model.length < 1 || model.length > 256)) {
+  if (model != null && !isValidModelId(model)) {
     // Model id is optional (shared-key/Gemini-default runs omit it), but if
-    // present it must be a sane string — same fail-closed stance as apiKey.
+    // present it must have the same shape as a POST /api/models ladder id
+    // (modelRank.js) — same fail-closed stance as apiKey. Not re-checked
+    // against the ladder itself: it is the user's own key and account.
     throw new Error("invalid model");
   }
   const record = {

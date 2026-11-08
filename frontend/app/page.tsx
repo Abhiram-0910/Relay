@@ -9,7 +9,7 @@ import { RunProgress } from "@/components/RunProgress";
 import { StatusBadge } from "@/components/StatusBadge";
 import { ValidationReport } from "@/components/ValidationReport";
 import { createRun, getRun, RateLimitedError } from "@/lib/api";
-import { byokReceiptSummary, EMPTY_BYOK, type ByokState } from "@/lib/byok";
+import { byokBlocksRun, byokReceiptSummary, EMPTY_BYOK, type ByokState } from "@/lib/byok";
 import { errorMessage, suggestsByok } from "@/lib/errors";
 import type { RateLimitInfo, RunSnapshot } from "@/lib/types";
 
@@ -32,7 +32,7 @@ export default function Home() {
     async (e: React.FormEvent) => {
       e.preventDefault();
       const url = specUrl.trim();
-      if (!url) return;
+      if (!url || byokBlocksRun(byok)) return;
       setPhase("creating");
       setErrorMsg(null);
       setRateLimit(null);
@@ -120,7 +120,7 @@ export default function Home() {
           />
           <button
             type="submit"
-            disabled={busy}
+            disabled={busy || byokBlocksRun(byok)}
             className="flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-lg bg-emerald-500 px-5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {busy && (
@@ -133,6 +133,11 @@ export default function Home() {
           </button>
         </div>
         <ByokFields value={byok} onChange={setByok} disabled={busy} />
+        {byokBlocksRun(byok) && (
+          <p className="text-xs text-amber-300">
+            Confirm a model to run with your key, or clear the provider and key to use the shared free tier.
+          </p>
+        )}
         <p className="text-xs text-muted">Free tier: 3 generations per day. Default is the Open-Meteo demo.</p>
       </form>
 

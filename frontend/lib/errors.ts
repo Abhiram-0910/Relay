@@ -29,6 +29,10 @@ const ERROR_MESSAGES: Record<string, string> = {
   key_rejected: "Key rejected — check that the key is valid and matches the provider.",
   provider_error: "That provider returned an unexpected error — try again shortly.",
   provider_bad_response: "That provider's response couldn't be read — try again shortly.",
+  provider_key_needs_workspace:
+    "Anthropic says this API key isn't tied to a single workspace. Create an API key inside one workspace in the Anthropic Console and use that key.",
+  no_suitable_model:
+    "Relay couldn't match any of this key's models to a model it knows how to pick. Try another provider or key.",
 
   // Pipeline-level (run.error)
   spec_fetch_failed: "Couldn't fetch that spec URL — check it's reachable and try again.",

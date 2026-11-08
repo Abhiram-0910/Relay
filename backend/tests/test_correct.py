@@ -894,3 +894,46 @@ def test_openai_fixes_broken_open_meteo_client(tmp_path: Path) -> None:
     assert result.succeeded, [a.__dict__ for a in result.attempts]
     assert result.final_report["status"] == sandbox.STATUS_PASS
     assert "models.py" in result.attempts[0].changed_files
+
+
+# --- live: real Anthropic (BYOK) fixes a real broken client through the real sandbox ------------
+# Phase 3 piece 8 step 7b: closes the Phase 2 residual "Anthropic adapter never live-verified".
+# Same broken-model technique as the Gemini/OpenAI proofs. The model id is the default the LIVE
+# Anthropic ladder chose (POST /api/models), passed in RELAY_LIVE_ANTHROPIC_MODEL; no default here.
+# Prints only model ids, statuses and changed file names: never the key, never response content.
+
+def _anthropic_live_ready() -> bool:
+    if (shutil.which("docker") is None or not os.environ.get("ANTHROPIC_API_KEY")
+            or not os.environ.get("RELAY_LIVE_ANTHROPIC_MODEL")):
+        return False
+    return all(
+        subprocess.run(["docker", "image", "inspect", img], capture_output=True).returncode == 0
+        for img in (sandbox.SANDBOX_IMAGE, sandbox.SIDECAR_IMAGE)
+    )
+
+
+@pytest.mark.live
+@pytest.mark.skipif(not _anthropic_live_ready(),
+                    reason="needs docker + `make sandbox-build` + ANTHROPIC_API_KEY + RELAY_LIVE_ANTHROPIC_MODEL")
+def test_anthropic_fixes_broken_open_meteo_client(tmp_path: Path) -> None:
+    model = os.environ["RELAY_LIVE_ANTHROPIC_MODEL"]
+    pkg = tmp_path / "client_pkg"
+    pkg.mkdir()
+    call_spec = _build_broken_open_meteo_pkg(pkg)
+
+    pre = sandbox.run_in_sandbox(pkg, call_spec)
+    pre_status = pre["status"]
+    assert pre_status == sandbox.STATUS_VALIDATION_FAILED, pre_status  # broken as intended
+
+    result = self_correct(pkg, call_spec, pre, provider="anthropic", model=model,
+                          api_key=os.environ["ANTHROPIC_API_KEY"])
+
+    # Plain values only, so a failing assert can't dump the result (or any response text).
+    summary = [(a.model, a.status_before, a.changed_files, a.status_after) for a in result.attempts]
+    final_status = result.final_report["status"]
+    print(f"\nLIVE_ANTHROPIC model={model} attempts={summary} final={final_status}")
+    succeeded = result.succeeded
+    assert succeeded, summary
+    assert final_status == sandbox.STATUS_PASS, final_status
+    first_changed = summary[0][2]
+    assert "models.py" in first_changed, first_changed

@@ -43,6 +43,10 @@ ERROR_CODES = PIPELINE_CODES | CORRECTOR_CODES
 REASON_CODES = ({v for k, v in vars(synthesis).items() if k.startswith("SKIP_") and isinstance(v, str)}
                 | {v for k, v in vars(servers).items() if k.startswith("SERVER_") and isinstance(v, str)})
 
+# POST /api/models error codes, read from the route's `error: "..."` literals; the frontend shows
+# them through errors.ts (fetchModels).
+WORKER_MODELS_CODES = set(re.findall(r'error: "([a-z_]+)"', (ROOT / "worker/src/models.js").read_text()))
+
 ERRORS_TS = _ts_record_keys(ROOT / "frontend/lib/errors.ts", "ERROR_MESSAGES")
 TONES = _ts_record_keys(ROOT / "frontend/lib/status.ts", "TONE_BY_STATUS")
 LABELS = _ts_record_keys(ROOT / "frontend/lib/status.ts", "LABELS")
@@ -76,3 +80,12 @@ def test_the_reason_codes_were_actually_found() -> None:
 @pytest.mark.parametrize("code", sorted(REASON_CODES))
 def test_every_generated_only_reason_has_a_sentence(code: str) -> None:
     assert code in REASONS_TS, f"{code} has no report.ts GENERATED_ONLY_REASONS sentence"
+
+
+def test_the_worker_models_codes_were_actually_found() -> None:
+    assert {"key_rejected", "rate_limited", "no_suitable_model"} <= WORKER_MODELS_CODES
+
+
+@pytest.mark.parametrize("code", sorted(WORKER_MODELS_CODES))
+def test_every_worker_models_code_has_a_message(code: str) -> None:
+    assert code in ERRORS_TS, f"{code} (worker/src/models.js) has no errors.ts message"

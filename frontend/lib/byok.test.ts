@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildRunPayload,
+  byokBlocksRun,
   byokReceiptSummary,
   canFetchModels,
   KeyRejectedError,
@@ -36,6 +37,15 @@ describe("buildRunPayload — the key must never ride along on a non-BYOK run", 
   it("trims whitespace off the key", () => {
     const payload = buildRunPayload("https://spec", { ...full, apiKey: "  sk-live-abcdef123456  " });
     expect(payload.apiKey).toBe("sk-live-abcdef123456");
+  });
+});
+
+describe("byokBlocksRun — a started BYOK section blocks the run until a model is confirmed", () => {
+  it("blocks with a provider or key but no confirmed model; never blocks an untouched section", () => {
+    expect(byokBlocksRun({ provider: "", apiKey: "", model: "" })).toBe(false);
+    expect(byokBlocksRun({ provider: "openai", apiKey: "", model: "" })).toBe(true);
+    expect(byokBlocksRun({ provider: "openai", apiKey: "sk-live-abcdef123456", model: "" })).toBe(true);
+    expect(byokBlocksRun(full)).toBe(false);
   });
 });
 

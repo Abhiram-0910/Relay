@@ -47,14 +47,19 @@ export interface RunSnapshot {
   byokDeletedAt?: string;
 }
 
-/** One selectable model from POST /api/models (uniform shape across all providers). */
-export interface ModelOption {
+export type ModelTier = "small" | "balanced" | "flagship";
+
+/** One rung of POST /api/models' ranked ladder (ordered small -> flagship, Phase 3 piece 8). */
+export interface LadderRung {
   id: string;
-  label: string;
+  tier: ModelTier;
 }
 
+/** POST /api/models: the Worker's proposal, never the key's full model list. */
 export interface ModelsResponse {
-  models: ModelOption[];
+  provider: string;
+  ladder: LadderRung[];
+  default_index: number;
 }
 
 export interface CreateRunResponse {

@@ -1,21 +1,27 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 import { fetchModels } from "@/lib/api";
+import { canFetchModels, modelErrorMessage, PROVIDER_OPTIONS, type ByokState, type Provider } from "@/lib/byok";
 import {
-  canFetchModels,
-  MODEL_FETCH_DEBOUNCE_MS,
-  modelErrorMessage,
-  PROVIDER_OPTIONS,
-  type ByokState,
-  type Provider,
-} from "@/lib/byok";
-import { debounce } from "@/lib/debounce";
-import type { ModelOption } from "@/lib/types";
+  canGoHigher,
+  canGoLower,
+  confirm,
+  confirmedModel,
+  currentRung,
+  higher,
+  IDLE_PICK,
+  lower,
+  proposeFromLadder,
+  TIER_LABELS,
+  type ModelPick,
+} from "@/lib/modelPick";
 
 const INPUT_CLASS =
   "min-h-11 w-full rounded-lg border border-line bg-white/5 px-3 text-sm text-foreground outline-none transition focus:border-emerald-500/50 focus:ring-2 focus:ring-emerald-500/20 disabled:opacity-60";
+const BUTTON_CLASS =
+  "min-h-11 cursor-pointer rounded-lg border border-line px-3 text-sm text-slate-200 transition hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50";
 
 interface Props {
   value: ByokState;
@@ -23,44 +29,42 @@ interface Props {
   disabled?: boolean;
 }
 
-/** Optional BYOK section: provider → key → live model list. The key is held in component state
- * only for the run submission — never logged, never written to localStorage/sessionStorage. */
+/** Optional BYOK section: provider → key → "Find a model" → one proposed model to confirm (or move
+ * one step higher/lower). The key is held in component state only for the run submission — never
+ * logged, never written to localStorage/sessionStorage. value.model is set only on Confirm. */
 export function ByokFields({ value, onChange, disabled }: Props) {
-  const [models, setModels] = useState<ModelOption[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [pick, setPick] = useState<ModelPick>(IDLE_PICK);
   const [showKey, setShowKey] = useState(false);
+  // Bumped on every provider/key edit, so a slow ladder response for the old key is dropped.
+  const requestSeq = useRef(0);
 
-  // Only touches stable setters + its args, so one debounced copy for the component's lifetime.
-  const loadModels = useCallback(async (provider: string, apiKey: string) => {
-    setLoading(true);
-    setError(null);
+  const editInput = (next: Pick<ByokState, "provider" | "apiKey">) => {
+    requestSeq.current += 1;
+    setPick(IDLE_PICK);
+    onChange({ ...next, model: "" });
+  };
+
+  const findModel = async () => {
+    const seq = ++requestSeq.current;
+    setPick({ status: "loading" });
+    let next: ModelPick;
     try {
-      const list = await fetchModels(provider, apiKey);
-      setModels(list);
-      if (list.length === 0) setError("No compatible models found for this key.");
+      const { ladder, default_index } = await fetchModels(value.provider, value.apiKey);
+      next = proposeFromLadder(ladder, default_index);
     } catch (err) {
-      setModels([]);
-      setError(modelErrorMessage(err));
-    } finally {
-      setLoading(false);
+      next = { status: "error", message: modelErrorMessage(err) };
     }
-  }, []);
+    if (seq === requestSeq.current) setPick(next);
+  };
 
-  const debouncedLoad = useRef(debounce(loadModels, MODEL_FETCH_DEBOUNCE_MS)).current;
+  // Any move re-proposes an unconfirmed model, so the run is blocked again until Confirm.
+  const step = (next: ModelPick) => {
+    setPick(next);
+    onChange({ ...value, model: confirmedModel(next) });
+  };
 
-  useEffect(() => {
-    // Provider/key changed: drop the stale list, then (only if the input is complete) debounce a
-    // fresh fetch. The debounce + this cleanup are why we don't hit the provider on every keystroke.
-    setModels([]);
-    setError(null);
-    if (!canFetchModels(value.provider, value.apiKey)) {
-      debouncedLoad.cancel();
-      return;
-    }
-    debouncedLoad(value.provider, value.apiKey);
-    return () => debouncedLoad.cancel();
-  }, [value.provider, value.apiKey, debouncedLoad]);
+  const rung = currentRung(pick);
+  const confirmed = pick.status === "confirmed";
 
   return (
     <details className="group rounded-lg border border-line bg-white/[0.02]">
@@ -85,7 +89,7 @@ export function ByokFields({ value, onChange, disabled }: Props) {
             id="byok-provider"
             value={value.provider}
             disabled={disabled}
-            onChange={(e) => onChange({ provider: e.target.value as Provider | "", apiKey: value.apiKey, model: "" })}
+            onChange={(e) => editInput({ provider: e.target.value as Provider | "", apiKey: value.apiKey })}
             className={INPUT_CLASS}
           >
             <option value="">Select a provider…</option>
@@ -109,7 +113,7 @@ export function ByokFields({ value, onChange, disabled }: Props) {
               spellCheck={false}
               value={value.apiKey}
               disabled={disabled || !value.provider}
-              onChange={(e) => onChange({ ...value, apiKey: e.target.value, model: "" })}
+              onChange={(e) => editInput({ provider: value.provider, apiKey: e.target.value })}
               placeholder="Your provider API key"
               className={`${INPUT_CLASS} pr-10 font-mono`}
             />
@@ -141,36 +145,46 @@ export function ByokFields({ value, onChange, disabled }: Props) {
           </p>
         </div>
 
-        <div className="space-y-1.5">
-          <div className="flex items-center gap-1.5">
-            <label htmlFor="byok-model" className="block text-xs font-medium text-slate-400">
-              Model
-            </label>
-            {loading && (
-              <svg viewBox="0 0 24 24" fill="none" className="h-3 w-3 animate-spin text-muted" aria-hidden="true">
-                <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" strokeOpacity="0.25" />
-                <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-              </svg>
-            )}
+        <button
+          type="button"
+          onClick={findModel}
+          disabled={disabled || pick.status === "loading" || !canFetchModels(value.provider, value.apiKey)}
+          className={BUTTON_CLASS}
+        >
+          {pick.status === "loading" ? "Finding a model…" : "Find a model"}
+        </button>
+        {pick.status === "error" && <p className="text-xs text-red-300">{pick.message}</p>}
+
+        {rung && (
+          <div className="space-y-3 rounded-lg border border-line bg-white/[0.03] p-3" aria-live="polite">
+            <div className="space-y-0.5">
+              <p className="text-xs text-muted">{confirmed ? "Confirmed model" : "Proposed model"}</p>
+              <p className="break-all font-mono text-sm text-foreground">{rung.id}</p>
+              <p className="text-xs text-slate-300">{TIER_LABELS[rung.tier]}</p>
+            </div>
+            <p className="text-xs text-muted">Higher models usually cost more on your own account.</p>
+            <div className="grid gap-2 sm:grid-cols-3">
+              <button type="button" onClick={() => step(confirm(pick))} disabled={disabled || confirmed}
+                      className={`${BUTTON_CLASS} border-emerald-500/40 text-emerald-200`}>
+                {confirmed ? "Confirmed" : "Confirm"}
+              </button>
+              <div className="space-y-1">
+                <button type="button" onClick={() => step(higher(pick))} disabled={disabled || !canGoHigher(pick)}
+                        className={`${BUTTON_CLASS} w-full`}>
+                  Use higher model
+                </button>
+                {!canGoHigher(pick) && <p className="text-xs text-muted">No higher model available</p>}
+              </div>
+              <div className="space-y-1">
+                <button type="button" onClick={() => step(lower(pick))} disabled={disabled || !canGoLower(pick)}
+                        className={`${BUTTON_CLASS} w-full`}>
+                  Use lower model
+                </button>
+                {!canGoLower(pick) && <p className="text-xs text-muted">No lower model available</p>}
+              </div>
+            </div>
           </div>
-          <select
-            id="byok-model"
-            value={value.model}
-            disabled={disabled || models.length === 0}
-            onChange={(e) => onChange({ ...value, model: e.target.value })}
-            className={INPUT_CLASS}
-          >
-            <option value="">
-              {loading ? "Loading models…" : models.length === 0 ? "Enter a valid key first" : "Select a model…"}
-            </option>
-            {models.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.label}
-              </option>
-            ))}
-          </select>
-          {error && <p className="text-xs text-red-300">{error}</p>}
-        </div>
+        )}
       </div>
     </details>
   );

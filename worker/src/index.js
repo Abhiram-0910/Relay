@@ -8,7 +8,7 @@
  *   POST /api/runs                  { specUrl } -> 202 { runId, status, statusUrl }   (CORS)
  *   GET  /api/runs/:id              -> 200 run snapshot | 404                          (CORS)
  *   POST /api/runs/:id/progress     Action-only callback (Bearer CALLBACK_SECRET)      (no CORS)
- *   POST /api/models                { provider, apiKey } -> 200 { models:[{id,label}] } (CORS)
+ *   POST /api/models                { provider, apiKey } -> 200 { provider, ladder, default_index } (CORS)
  *
  * Credentials (three, distinct — see ARCHITECTURE.md):
  *   env.GH_PAT           Worker->GitHub, triggers workflow_dispatch. Only use.

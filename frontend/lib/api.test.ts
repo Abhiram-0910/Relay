@@ -40,10 +40,10 @@ describe("createRun — BYOK wiring", () => {
 });
 
 describe("fetchModels", () => {
-  it("returns the normalized model list on 200", async () => {
-    const models = [{ id: "gpt-5", label: "gpt-5" }];
-    fetchMock.mockResolvedValue(fakeResponse(200, { models }));
-    await expect(fetchModels("openai", "sk-live-abcdef123456")).resolves.toEqual(models);
+  it("returns the ranked ladder on 200", async () => {
+    const ladder = { provider: "openai", ladder: [{ id: "gpt-5-mini", tier: "balanced" }], default_index: 0 };
+    fetchMock.mockResolvedValue(fakeResponse(200, ladder));
+    await expect(fetchModels("openai", "sk-live-abcdef123456")).resolves.toEqual(ladder);
 
     const sent = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(sent).toEqual({ provider: "openai", apiKey: "sk-live-abcdef123456" });
@@ -57,6 +57,11 @@ describe("fetchModels", () => {
   it("throws KeyRejectedError on 403 too", async () => {
     fetchMock.mockResolvedValue(fakeResponse(403, {}));
     await expect(fetchModels("anthropic", "sk-bad")).rejects.toBeInstanceOf(KeyRejectedError);
+  });
+
+  it("a 400 provider_key_needs_workspace reaches errorMessage (not KeyRejectedError)", async () => {
+    fetchMock.mockResolvedValue(fakeResponse(400, { error: "provider_key_needs_workspace", provider: "anthropic" }));
+    await expect(fetchModels("anthropic", "sk-ant-abcdef123456")).rejects.toThrow(/isn't tied to a single workspace/);
   });
 
   it("throws the honest per-code message, never a raw status number", async () => {
