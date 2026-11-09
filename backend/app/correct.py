@@ -120,6 +120,9 @@ class Attempt:
     changed_files: list[str]
     status_after: str
     detail: str
+    # Set only when the corrector itself raised: the exception's class name, never its message (the
+    # attempt is serialized into the public result, and a provider error message is not ours to show).
+    error_class: str | None = None
 
 
 @dataclass
@@ -489,7 +492,8 @@ def self_correct(
                      else corrector(model_id, call_spec, report, models_code, client_code))
         except Exception as exc:  # classify what we recognize; stop either way, don't burn the ladder
             status_after = _classify_corrector_exception(exc, byok=api_key is not None)
-            attempts.append(Attempt(model_id, status_before, [], status_after, str(exc)[:300]))
+            attempts.append(Attempt(model_id, status_before, [], status_after, "",
+                                    error_class=type(exc).__name__))
             break
 
         changed = _apply_patch(pkg_dir, patch, models_code, client_code)

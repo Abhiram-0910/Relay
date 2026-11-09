@@ -106,6 +106,9 @@ def test_corrector_error_stops_the_ladder(tmp_path: Path) -> None:
     assert not result.succeeded
     assert len(result.attempts) == 1
     assert result.attempts[0].status_after == "corrector_error"
+    # The record names the exception class only; the message never reaches the (public) attempt.
+    assert result.attempts[0].error_class == "RuntimeError"
+    assert "quota exhausted" not in repr(result.attempts[0].__dict__)
 
 
 def test_refuses_to_correct_a_passing_run(tmp_path: Path) -> None:
@@ -929,7 +932,8 @@ def test_anthropic_fixes_broken_open_meteo_client(tmp_path: Path) -> None:
                           api_key=os.environ["ANTHROPIC_API_KEY"])
 
     # Plain values only, so a failing assert can't dump the result (or any response text).
-    summary = [(a.model, a.status_before, a.changed_files, a.status_after) for a in result.attempts]
+    summary = [(a.model, a.status_before, a.changed_files, a.status_after, a.error_class)
+               for a in result.attempts]
     final_status = result.final_report["status"]
     print(f"\nLIVE_ANTHROPIC model={model} attempts={summary} final={final_status}")
     succeeded = result.succeeded

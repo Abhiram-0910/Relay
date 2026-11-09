@@ -13,6 +13,8 @@ export interface CorrectionAttempt {
   changed_files: string[];
   status_after: string;
   detail: string;
+  // set only when the corrector itself raised: the exception class name, never its message
+  error_class?: string | null;
 }
 
 export interface ValidatedEndpoint {
