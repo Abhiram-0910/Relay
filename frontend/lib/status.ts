@@ -10,7 +10,8 @@
 //                         non_json_response): not Relay failures, and no patch can fix them; and the
 //                         run-level unsupported_spec_construct (4i): the spec may be valid, Relay can't resolve it yet
 //   red     (danger)   -> call_failed, sandbox_timeout, failed, ssrf_blocked, rate_limited, error,
-//                         and the 8 corrector-level codes (Step 3) — all failure modes
+//                         and the corrector-level codes (Step 3, plus the 3 Anthropic codes from
+//                         piece 8 step 7b) — all failure modes
 //   slate   (neutral)  -> anything unknown
 
 export type Tone = "success" | "warn" | "danger" | "neutral";
@@ -45,6 +46,9 @@ const TONE_BY_STATUS: Record<string, Tone> = {
   corrector_bad_response: "danger",
   corrector_error: "danger",
   model_unsupported: "danger",
+  corrector_no_tool_call: "danger",
+  provider_rejected_request: "danger",
+  provider_key_needs_workspace: "danger",
   // danger — pipeline-level codes (Step 3, ci_runner.py's _classify_pipeline_error). Only ever
   // appear as run.error. Step 5: giving the run-failed banner a StatusBadge surfaced that these had
   // never been mapped — errors.ts had full-sentence messages for them, but no short label/tone.
@@ -120,6 +124,9 @@ const LABELS: Record<string, string> = {
   corrector_bad_response: "Bad response",
   corrector_error: "Auto-fix failed",
   model_unsupported: "Model unsupported",
+  corrector_no_tool_call: "No fix returned",
+  provider_rejected_request: "Request rejected",
+  provider_key_needs_workspace: "Key needs workspace",
   spec_fetch_failed: "Fetch failed",
   spec_invalid: "Invalid spec",
   unsupported_spec_version: "Unsupported version",

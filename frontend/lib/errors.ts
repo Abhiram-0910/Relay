@@ -9,7 +9,9 @@
 //     byok_key_missing, byok_fetch_failed (a BYOK run fails closed rather than use the shared key).
 //   - Corrector-level codes (backend/app/correct.py's _classify_corrector_exception):
 //     corrector_auth_failed, corrector_config_error, quota_exhausted_shared/byok,
-//     corrector_network_error, corrector_bad_response, corrector_error, model_unsupported.
+//     corrector_network_error, corrector_bad_response, corrector_error, model_unsupported,
+//     corrector_no_tool_call, provider_rejected_request, provider_key_needs_workspace (the last is
+//     shared with POST /api/models: the same Anthropic unscoped-key case, one message).
 //
 // Never render a raw code, a raw exception string, or an HTTP status number to the end user —
 // everything that shows an error MUST go through here, same discipline as status.ts.
@@ -65,6 +67,10 @@ const ERROR_MESSAGES: Record<string, string> = {
   corrector_error: "Auto-fix didn't succeed this time.",
   model_unsupported:
     "That model can't be used for auto-fix: it doesn't support this request format, or your key can't access it. Pick a different model.",
+  corrector_no_tool_call:
+    "The model replied without returning a fix, so nothing was changed. Try again, or pick a different model.",
+  provider_rejected_request:
+    "The provider rejected Relay's auto-fix request for this model. This isn't a problem with your key. Try a different model.",
 };
 
 // Codes where switching to (or already using) BYOK is a genuine way around the problem — a shared

@@ -18,6 +18,7 @@ The corrector reads the sandbox report's structured status to know what to fix:
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -73,6 +74,36 @@ class CorrectorModelError(Exception):
     to this key, or it rejects the structured-output format. A different model is the only fix."""
 
 
+def _safe_token(value: object) -> str:
+    """A provider enum value (stop_reason, error.type) reduced to a fixed-alphabet token, so the
+    public attempt record can carry it without ever carrying provider text."""
+    return value if isinstance(value, str) and re.fullmatch(r"[a-z_]{1,40}", value) else "unknown"
+
+
+class CorrectorNoToolCallError(Exception):
+    """A 2xx reply with no usable tool call: the model answered in text, or stopped (max_tokens)
+    before the call was complete. `safe_detail` carries the stop_reason token, never response text."""
+
+    def __init__(self, stop_reason: object) -> None:
+        self.safe_detail = f"stop_reason={_safe_token(stop_reason)}"
+        super().__init__(self.safe_detail)
+
+
+class CorrectorRequestRejectedError(Exception):
+    """The provider rejected the request itself as invalid (400 invalid_request_error) — a shape or
+    parameter this model doesn't accept, so a retry sends the same rejected request. `safe_detail`
+    carries error.type only, never error.message."""
+
+    def __init__(self, error_type: object) -> None:
+        self.safe_detail = f"error_type={_safe_token(error_type)}"
+        super().__init__(self.safe_detail)
+
+
+class CorrectorKeyNeedsWorkspaceError(Exception):
+    """Anthropic: the key isn't scoped to one workspace (400 naming anthropic-workspace-id). Same
+    case and code as POST /api/models (worker/src/models.js anthropicNeedsWorkspace)."""
+
+
 def _classify_corrector_exception(exc: Exception, *, byok: bool) -> str:
     """Map a corrector exception to a status code, using `byok` only where the message/fix genuinely
     differs (quota and auth) — see ARCHITECTURE.md Step 3. Unclassified exceptions (an adapter didn't
@@ -89,6 +120,12 @@ def _classify_corrector_exception(exc: Exception, *, byok: bool) -> str:
         return "corrector_bad_response"
     if isinstance(exc, CorrectorModelError):
         return "model_unsupported"
+    if isinstance(exc, CorrectorNoToolCallError):
+        return "corrector_no_tool_call"
+    if isinstance(exc, CorrectorRequestRejectedError):
+        return "provider_rejected_request"
+    if isinstance(exc, CorrectorKeyNeedsWorkspaceError):
+        return "provider_key_needs_workspace"
     return "corrector_error"
 
 
@@ -122,6 +159,8 @@ class Attempt:
     detail: str
     # Set only when the corrector itself raised: the exception's class name, never its message (the
     # attempt is serialized into the public result, and a provider error message is not ours to show).
+    # On that path `detail` is the exception's fixed-alphabet `safe_detail` (e.g. "stop_reason=end_turn")
+    # or empty — never provider text.
     error_class: str | None = None
 
 
@@ -334,17 +373,34 @@ def openai_compatible_corrector(base_url: str) -> Corrector:
 _ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 _ANTHROPIC_VERSION = "2023-06-01"  # required header; the API version, not a model version
 _ANTHROPIC_TOOL_NAME = "emit_client_patch"
-# max_tokens is REQUIRED by the Messages API and bounds the whole response, which here is two entire
-# source files — give real headroom. Within every current Claude model's output cap.
-_ANTHROPIC_MAX_TOKENS = 16384
+# max_tokens is REQUIRED and bounds thinking + the tool call together (thinking is on by default on
+# the 5.x models, always on for Opus 5.5). The call echoes two whole files: the Open-Meteo demo's
+# models.py alone is ~40.7k chars (~10-13.5k tokens before JSON escaping), so 16384 could starve the
+# call. 32000 is within every 4.5+ model's output cap (64K on 4.5, 128K on 5.5).
+# ponytail: pre-4 Claude models (8K/4K output caps) would 400 -> provider_rejected_request; retired.
+_ANTHROPIC_MAX_TOKENS = 32000
+# Non-streaming: nothing arrives until the whole reply is generated, so the read timeout is the
+# generation time. 300s is too tight for ~20k output tokens; 600s matches the docs' 10-minute
+# non-streaming guidance. ponytail: streaming would remove this ceiling; add it if 600s is ever hit.
+_ANTHROPIC_TIMEOUT = 600
+
+
+def _anthropic_error(resp) -> dict:
+    """The {type, message} error object of an Anthropic error reply, or {} if unreadable."""
+    try:
+        err = resp.json().get("error")
+    except (ValueError, AttributeError):
+        return {}
+    return err if isinstance(err, dict) else {}
 
 
 def anthropic_corrector(model_id: str, call_spec: dict, report: dict,
                         models_code: str, client_code: str, *, api_key: str | None = None) -> Patch:
-    """Anthropic Messages API corrector. Structured output is done via forced tool-use (not
-    `response_format`): a single tool whose `input_schema` is the Patch shape, `tool_choice` forcing
-    it, and the patch read from the response's `tool_use` block. Raw `requests`, no SDK (zero new
-    deps). BYOK-only — no shared Anthropic key exists — so `api_key` is required; used for this one
+    """Anthropic Messages API corrector. Structured output via one tool whose `input_schema` is the
+    Patch shape, with `tool_choice: auto` and the patch read from the reply's `tool_use` block.
+    Live-verified 2026-11-09 (probe 3, haiku/sonnet/opus 5.5): forced tool_choice ("tool"/"any") and
+    `temperature` are both 400s on the 5.5 models, so neither is sent; with auto the model may reply
+    without a tool call, which is its own code. Raw `requests`, no SDK (zero new deps). BYOK-only — no shared Anthropic key exists — so `api_key` is required; used for this one
     call, never logged or persisted. `_SYSTEM_INSTRUCTION` is the fixed role/rules (top-level
     `system`); the per-run failing call + code go in the user message, same split as the other
     adapters."""
@@ -353,7 +409,6 @@ def anthropic_corrector(model_id: str, call_spec: dict, report: dict,
     payload = {
         "model": model_id,
         "max_tokens": _ANTHROPIC_MAX_TOKENS,
-        "temperature": 0.0,  # deterministic-as-possible patches, same as the other adapters
         "system": _SYSTEM_INSTRUCTION,
         "messages": [
             {"role": "user",
@@ -364,14 +419,14 @@ def anthropic_corrector(model_id: str, call_spec: dict, report: dict,
             "description": "Return the full corrected contents of both files.",
             "input_schema": _PATCH_JSON_SCHEMA,
         }],
-        "tool_choice": {"type": "tool", "name": _ANTHROPIC_TOOL_NAME},
+        "tool_choice": {"type": "auto"},
     }
     try:
         resp = requests.post(
             _ANTHROPIC_URL, json=payload,
             headers={"x-api-key": api_key, "anthropic-version": _ANTHROPIC_VERSION,
                      "Content-Type": "application/json"},
-            timeout=_CORRECTOR_TIMEOUT,
+            timeout=_ANTHROPIC_TIMEOUT,
         )
         resp.raise_for_status()
     except requests.HTTPError as exc:
@@ -380,20 +435,30 @@ def anthropic_corrector(model_id: str, call_spec: dict, report: dict,
             raise CorrectorAuthError(str(exc)) from exc
         if status == 429:
             raise CorrectorQuotaError(str(exc)) from exc
+        if status == 400 and exc.response is not None:
+            err = _anthropic_error(exc.response)
+            if err.get("type") == "invalid_request_error":
+                if "anthropic-workspace-id" in str(err.get("message") or ""):
+                    raise CorrectorKeyNeedsWorkspaceError() from exc
+                raise CorrectorRequestRejectedError(err.get("type")) from exc
         raise  # other HTTP errors stay unclassified — don't guess a bucket
     except (requests.ConnectionError, requests.Timeout) as exc:
         raise CorrectorNetworkError(str(exc)) from exc
 
-    # tool_choice forces the tool, but the content list can carry other blocks (e.g. text) — scan
-    # for the tool_use block rather than assuming it's first.
+    # Thinking (and text) blocks can precede the call — scan for our tool_use block by type AND
+    # name, never content[0]. A max_tokens stop means any call present was cut off mid-input.
     try:
-        for block in resp.json().get("content", []):
-            if block.get("type") == "tool_use":
-                inp = block["input"]  # forced strict tool schema guarantees both keys
+        body = resp.json()
+        stop_reason = body.get("stop_reason")
+        if stop_reason == "max_tokens":
+            raise CorrectorNoToolCallError(stop_reason)
+        for block in body.get("content", []):
+            if block.get("type") == "tool_use" and block.get("name") == _ANTHROPIC_TOOL_NAME:
+                inp = block["input"]
                 return {"models_py": inp["models_py"], "client_py": inp["client_py"]}
-        raise CorrectorBadResponseError("anthropic response contained no tool_use block")
-    except (KeyError, TypeError, json.JSONDecodeError) as exc:
-        raise CorrectorBadResponseError(str(exc)) from exc
+        raise CorrectorNoToolCallError(stop_reason)
+    except (KeyError, TypeError, AttributeError, json.JSONDecodeError) as exc:
+        raise CorrectorBadResponseError(type(exc).__name__) from exc
 
 
 # Provider dispatch. Each adapter honours the SAME
@@ -492,8 +557,8 @@ def self_correct(
                      else corrector(model_id, call_spec, report, models_code, client_code))
         except Exception as exc:  # classify what we recognize; stop either way, don't burn the ladder
             status_after = _classify_corrector_exception(exc, byok=api_key is not None)
-            attempts.append(Attempt(model_id, status_before, [], status_after, "",
-                                    error_class=type(exc).__name__))
+            attempts.append(Attempt(model_id, status_before, [], status_after,
+                                    getattr(exc, "safe_detail", ""), error_class=type(exc).__name__))
             break
 
         changed = _apply_patch(pkg_dir, patch, models_code, client_code)

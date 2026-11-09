@@ -285,6 +285,10 @@ def test_classify_corrector_exception_shared_vs_byok() -> None:
     assert classify(correct.CorrectorBadResponseError("x"), byok=True) == "corrector_bad_response"
     assert classify(correct.CorrectorModelError("x"), byok=True) == "model_unsupported"
     assert classify(correct.CorrectorModelError("x"), byok=False) == "model_unsupported"
+    assert classify(correct.CorrectorNoToolCallError("end_turn"), byok=True) == "corrector_no_tool_call"
+    assert classify(correct.CorrectorRequestRejectedError("invalid_request_error"), byok=True) \
+        == "provider_rejected_request"
+    assert classify(correct.CorrectorKeyNeedsWorkspaceError(), byok=True) == "provider_key_needs_workspace"
     assert classify(RuntimeError("unrecognized"), byok=True) == "corrector_error"  # safe fallback
 
 
@@ -590,20 +594,40 @@ def test_openai_compatible_routes_through_self_correct(tmp_path: Path) -> None:
     assert (pkg / "models.py").read_text() == "# fixed model\n"
 
 
-# --- anthropic adapter (Messages API, forced tool-use structured output) -----------------------
+# --- anthropic adapter (Messages API, tool-use structured output with tool_choice auto) ---------
 
 def _fake_anthropic_response(patch: dict, *, extra_blocks: list | None = None):
     """A MagicMock shaped like a requests Response whose body is an Anthropic Messages reply
     carrying `patch` in a tool_use block. `extra_blocks` are prepended (e.g. a text block) to prove
     the parser scans for tool_use rather than assuming position."""
-    from unittest.mock import MagicMock
-
     content = list(extra_blocks or [])
     content.append({"type": "tool_use", "name": "emit_client_patch", "input": patch})
+    return _fake_anthropic_body({"content": content, "stop_reason": "tool_use"})
+
+
+def _fake_anthropic_body(body: dict):
+    from unittest.mock import MagicMock
+
     resp = MagicMock()
     resp.raise_for_status.return_value = None
-    resp.json.return_value = {"content": content}
+    resp.json.return_value = body
     return resp
+
+
+def _fake_anthropic_400(error: dict):
+    """A real-shaped Anthropic 400: raise_for_status raises HTTPError, json() is the error body."""
+    resp = _fake_http_error_response(400)
+    resp.json.return_value = {"type": "error", "error": error}
+    return resp
+
+
+def _call_anthropic(fake, model="claude-sonnet-5-5"):
+    from unittest.mock import patch as mock_patch
+
+    with mock_patch("app.correct.requests.post", return_value=fake) as post:
+        result = correct.anthropic_corrector(model, {}, _report(sandbox.STATUS_CALL_FAILED),
+                                             "# m\n", "# c\n", api_key="sk-ant-user")
+    return result, post
 
 
 def test_anthropic_request_shape_and_parse() -> None:
@@ -630,9 +654,9 @@ def test_anthropic_request_shape_and_parse() -> None:
     assert payload["model"] == "claude-opus-4-6"
     assert payload["max_tokens"] >= 8192               # must cover two whole files
     assert payload["system"] == correct._SYSTEM_INSTRUCTION  # rules in system, not user msg
-    # Structured output via forced tool-use, not response_format.
+    # Structured output via a tool with tool_choice auto (forced choice is a 400 on 5.5 models).
     assert "response_format" not in payload
-    assert payload["tool_choice"] == {"type": "tool", "name": "emit_client_patch"}
+    assert payload["tool_choice"] == {"type": "auto"}
     tool = payload["tools"][0]
     assert tool["name"] == "emit_client_patch"
     assert tool["input_schema"]["required"] == ["models_py", "client_py"]
@@ -690,18 +714,126 @@ def test_anthropic_classifies_network_error() -> None:
                                         "# m\n", "# c\n", api_key="sk-ant-user")
 
 
-def test_anthropic_classifies_missing_tool_use_as_bad_response() -> None:
-    """tool_choice forces the tool, but a 2xx with no tool_use block at all is still a response we
-    can't use — same bucket as malformed content, not a network/auth problem."""
-    from unittest.mock import MagicMock, patch as mock_patch
+def test_anthropic_malformed_tool_input_is_bad_response() -> None:
+    """Our tool_use block is there but its input lacks a required key: unusable, not "no call"."""
+    fake = _fake_anthropic_body({"stop_reason": "tool_use", "content": [
+        {"type": "tool_use", "name": "emit_client_patch", "input": {"models_py": "x"}}]})
+    with pytest.raises(correct.CorrectorBadResponseError):
+        _call_anthropic(fake)
 
-    resp = MagicMock()
-    resp.raise_for_status.return_value = None
-    resp.json.return_value = {"content": [{"type": "text", "text": "oops, no tool call"}]}
-    with mock_patch("app.correct.requests.post", return_value=resp):
-        with pytest.raises(correct.CorrectorBadResponseError):
-            correct.anthropic_corrector("claude-opus-4-6", {}, _report(sandbox.STATUS_CALL_FAILED),
-                                        "# m\n", "# c\n", api_key="sk-ant-user")
+
+# --- piece 8 step 7b: the request shape the live 5.5 models accept (probe 3, 2026-11-09) --------
+# Live findings: forced tool_choice {"type":"tool"} -> 400 on sonnet-5-5 (probe 1); `temperature`
+# -> 400 "deprecated for this model" on haiku/sonnet/opus-5-5; tool_choice auto without temperature
+# -> 200, stop_reason tool_use, content ["tool_use"] (sonnet) or ["thinking","tool_use"] (haiku, opus).
+
+@pytest.mark.parametrize("model", ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"])
+def test_anthropic_request_shape_per_model(model) -> None:
+    fixed = {"models_py": "# m\n", "client_py": "# c\n"}
+    _, post = _call_anthropic(_fake_anthropic_response(fixed), model=model)
+    payload = post.call_args.kwargs["json"]
+    assert set(payload) == {"model", "max_tokens", "system", "messages", "tools", "tool_choice"}
+    assert "temperature" not in payload
+    assert payload["tool_choice"] == {"type": "auto"}
+    assert payload["model"] == model
+    assert payload["max_tokens"] == correct._ANTHROPIC_MAX_TOKENS >= 32000  # thinking + two whole files
+    assert [t["name"] for t in payload["tools"]] == ["emit_client_patch"]
+    assert post.call_args.kwargs["timeout"] == correct._ANTHROPIC_TIMEOUT
+
+
+@pytest.mark.parametrize("leading", [[], [{"type": "thinking", "thinking": "", "signature": "s"}]],
+                         ids=["tool_use", "thinking+tool_use"])
+def test_anthropic_parses_the_live_block_orders(leading) -> None:
+    fixed = {"models_py": "# fixed\n", "client_py": "# c\n"}
+    result, _ = _call_anthropic(_fake_anthropic_response(fixed, extra_blocks=leading))
+    assert result == fixed
+
+
+def test_anthropic_ignores_a_tool_use_block_with_another_name() -> None:
+    fake = _fake_anthropic_body({"stop_reason": "tool_use", "content": [
+        {"type": "tool_use", "name": "something_else", "input": {"models_py": "x", "client_py": "y"}}]})
+    with pytest.raises(correct.CorrectorNoToolCallError) as info:
+        _call_anthropic(fake)
+    assert info.value.safe_detail == "stop_reason=tool_use"
+
+
+def test_anthropic_text_reply_without_tool_call_is_no_tool_call() -> None:
+    fake = _fake_anthropic_body({"stop_reason": "end_turn", "content": [
+        {"type": "thinking", "thinking": "SECRET thinking", "signature": "s"},
+        {"type": "text", "text": "SECRET reply text"}]})
+    with pytest.raises(correct.CorrectorNoToolCallError) as info:
+        _call_anthropic(fake)
+    assert info.value.safe_detail == "stop_reason=end_turn"
+    assert "SECRET" not in str(info.value)
+    assert correct._classify_corrector_exception(info.value, byok=True) == "corrector_no_tool_call"
+
+
+@pytest.mark.parametrize("content", [
+    [{"type": "thinking", "thinking": "", "signature": "s"}],
+    [{"type": "thinking", "thinking": "", "signature": "s"},
+     {"type": "tool_use", "name": "emit_client_patch", "input": {"models_py": "x", "client_py": "y"}}],
+], ids=["thinking-only", "truncated-call"])
+def test_anthropic_max_tokens_stop_is_no_tool_call(content) -> None:
+    """A max_tokens stop is unusable even when a tool_use block is present: the call was cut off."""
+    with pytest.raises(correct.CorrectorNoToolCallError) as info:
+        _call_anthropic(_fake_anthropic_body({"stop_reason": "max_tokens", "content": content}))
+    assert info.value.safe_detail == "stop_reason=max_tokens"
+
+
+def test_anthropic_odd_stop_reason_is_reduced_to_unknown() -> None:
+    fake = _fake_anthropic_body({"stop_reason": "Weird <text>", "content": []})
+    with pytest.raises(correct.CorrectorNoToolCallError) as info:
+        _call_anthropic(fake)
+    assert info.value.safe_detail == "stop_reason=unknown"
+
+
+def test_anthropic_invalid_request_400_is_provider_rejected_request() -> None:
+    fake = _fake_anthropic_400({"type": "invalid_request_error",
+                                "message": "`temperature` is deprecated for this model."})
+    with pytest.raises(correct.CorrectorRequestRejectedError) as info:
+        _call_anthropic(fake)
+    assert info.value.safe_detail == "error_type=invalid_request_error"
+    assert "temperature" not in str(info.value)  # error.message is never carried
+    assert correct._classify_corrector_exception(info.value, byok=True) == "provider_rejected_request"
+
+
+def test_anthropic_workspace_400_is_provider_key_needs_workspace() -> None:
+    fake = _fake_anthropic_400({"type": "invalid_request_error", "message":
+                                "This API key is not scoped to a workspace. Requests must include "
+                                "the anthropic-workspace-id header."})
+    with pytest.raises(correct.CorrectorKeyNeedsWorkspaceError) as info:
+        _call_anthropic(fake)
+    assert correct._classify_corrector_exception(info.value, byok=True) == "provider_key_needs_workspace"
+
+
+@pytest.mark.parametrize("body", [{"type": "error", "error": {"type": "api_error", "message": "x"}},
+                                  "not json"], ids=["other-400-type", "unreadable-400"])
+def test_anthropic_other_400s_stay_unclassified(body) -> None:
+    fake = _fake_http_error_response(400)
+    if body == "not json":
+        fake.json.side_effect = ValueError("no json")
+    else:
+        fake.json.return_value = body
+    with pytest.raises(requests.HTTPError):
+        _call_anthropic(fake)
+
+
+def test_self_correct_records_the_safe_detail_for_a_no_tool_call(tmp_path: Path) -> None:
+    """Through self_correct: the public attempt names the code, the class and the stop_reason
+    token, and nothing from the reply."""
+    from unittest.mock import patch as mock_patch
+
+    fake = _fake_anthropic_body({"stop_reason": "end_turn", "content": [
+        {"type": "text", "text": "SECRET reply text"}]})
+    with mock_patch("app.correct.requests.post", return_value=fake):
+        result = self_correct(_make_pkg(tmp_path), {"base_url": OPEN_METEO_BASE_URL},
+                              _report(sandbox.STATUS_CALL_FAILED),
+                              run_sandbox=lambda *a, **k: pytest.fail("sandbox must not run"),
+                              api_key="sk-ant-user", provider="anthropic", model="claude-sonnet-5-5")
+    [a] = result.attempts
+    assert (a.status_after, a.error_class, a.detail) == (
+        "corrector_no_tool_call", "CorrectorNoToolCallError", "stop_reason=end_turn")
+    assert "SECRET" not in repr(a.__dict__)
 
 
 def test_anthropic_routes_through_self_correct(tmp_path: Path) -> None:
@@ -932,8 +1064,9 @@ def test_anthropic_fixes_broken_open_meteo_client(tmp_path: Path) -> None:
                           api_key=os.environ["ANTHROPIC_API_KEY"])
 
     # Plain values only, so a failing assert can't dump the result (or any response text).
-    summary = [(a.model, a.status_before, a.changed_files, a.status_after, a.error_class)
-               for a in result.attempts]
+    # detail only when the corrector raised: then it is a fixed-alphabet token, never response text.
+    summary = [(a.model, a.status_before, a.changed_files, a.status_after, a.error_class,
+                a.detail if a.error_class else None) for a in result.attempts]
     final_status = result.final_report["status"]
     print(f"\nLIVE_ANTHROPIC model={model} attempts={summary} final={final_status}")
     succeeded = result.succeeded

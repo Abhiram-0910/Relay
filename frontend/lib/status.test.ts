@@ -27,7 +27,8 @@ describe("status → tone SSOT", () => {
   it("red/danger covers sandbox_timeout and every corrector-level code (Step 3)", () => {
     for (const s of ["sandbox_timeout", "corrector_auth_failed", "corrector_config_error",
                      "quota_exhausted_shared", "quota_exhausted_byok", "corrector_network_error",
-                     "corrector_bad_response", "corrector_error", "model_unsupported"]) {
+                     "corrector_bad_response", "corrector_error", "model_unsupported",
+                     "corrector_no_tool_call", "provider_rejected_request", "provider_key_needs_workspace"]) {
       expect(toneOf(s)).toBe("danger");
       expect(labelOf(s)).not.toBe(s); // a real short label, not a fallback to the raw code
     }
