@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from app import sandbox, servers, synthesis
+from app import correct, sandbox, servers, synthesis
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -35,7 +35,8 @@ def _ts_record_keys(ts_file: Path, const: str) -> set[str]:
 
 
 PIPELINE_CODES = _returned_strings(ROOT / "backend/app/ci_runner.py", "_classify_pipeline_error")
-CORRECTOR_CODES = _returned_strings(ROOT / "backend/app/correct.py", "_classify_corrector_exception")
+CORRECTOR_CODES = (_returned_strings(ROOT / "backend/app/correct.py", "_classify_corrector_exception")
+                   | {correct.CORRECTOR_BUDGET_EXHAUSTED})  # emitted by self_correct's budget check
 SANDBOX_STATUSES = {v for k, v in vars(sandbox).items() if k.startswith("STATUS_") and isinstance(v, str)}
 ERROR_CODES = PIPELINE_CODES | CORRECTOR_CODES
 
@@ -56,7 +57,7 @@ REASONS_TS = _ts_record_keys(ROOT / "frontend/lib/report.ts", "GENERATED_ONLY_RE
 def test_the_code_lists_were_actually_found() -> None:
     assert {"spec_invalid", "unsupported_spec_version", "unsupported_spec_construct",
             "no_operations_generated"} <= PIPELINE_CODES
-    assert {"model_unsupported", "corrector_error"} <= CORRECTOR_CODES
+    assert {"model_unsupported", "corrector_error", "corrector_budget_exhausted"} <= CORRECTOR_CODES
     assert {"verified_pass", "call_failed"} <= SANDBOX_STATUSES
 
 

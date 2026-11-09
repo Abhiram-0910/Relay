@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -210,7 +211,8 @@ def _build_prompt(call_spec: dict, report: dict, models_code: str, client_code: 
 
 
 def gemini_corrector(model_id: str, call_spec: dict, report: dict,
-                     models_code: str, client_code: str, *, api_key: str | None = None) -> Patch:
+                     models_code: str, client_code: str, *, api_key: str | None = None,
+                     timeout: float | None = None) -> Patch:
     """Ask Gemini for corrected file contents. Imported lazily so the loop's logic stays testable
     without the SDK or an API key present. `api_key`, when set, is the user's BYOK key and is used
     for this call instead of the shared GEMINI_API_KEY env var; it is never logged or persisted."""
@@ -229,8 +231,11 @@ def gemini_corrector(model_id: str, call_spec: dict, report: dict,
 
     prompt = _build_prompt(call_spec, report, models_code, client_code)
 
+    # The SDK sets no request timeout of its own; a budget cap (seconds) becomes HttpOptions (ms).
+    cap = _clamp_timeout(None, timeout)
+    http = {"http_options": types.HttpOptions(timeout=int(cap * 1000))} if cap is not None else {}
     # BYOK key overrides the shared env key for this call only; else fall back to GEMINI_API_KEY.
-    client = genai.Client(api_key=api_key) if api_key else genai.Client()
+    client = genai.Client(api_key=api_key, **http) if api_key else genai.Client(**http)
     try:
         response = client.models.generate_content(
             model=model_id,
@@ -269,6 +274,22 @@ def gemini_corrector(model_id: str, call_spec: dict, report: dict,
 # verbatim inside a strict json_schema string — gpt-4o-mini timed out at 90s twice in a row on
 # exactly this payload (2026-08-08 live runs). 300s gives headroom past that measured worst case.
 _CORRECTOR_TIMEOUT = 300
+
+# Corrector wall-clock budget. The caller (ci_runner) passes ONE `deadline` for the whole run; each
+# attempt reserves the sandbox re-run that follows a patch (20 s host kill + docker control-plane
+# calls) and gets at most what is left as its provider timeout. Below MIN_ATTEMPT_SECONDS an attempt
+# can't realistically finish (the live sonnet-5-5 attempt took ~60-80 s of a 90.55 s test), so the
+# loop stops with CORRECTOR_BUDGET_EXHAUSTED instead of starting one the job limit would kill.
+SANDBOX_RERUN_RESERVE_SECONDS = 30
+MIN_ATTEMPT_SECONDS = 60
+CORRECTOR_BUDGET_EXHAUSTED = "corrector_budget_exhausted"
+
+
+def _clamp_timeout(provider_timeout: float | None, cap: float | None) -> float | None:
+    """The attempt's timeout: the provider's own timeout, cut to the time the budget has left."""
+    if cap is None:
+        return provider_timeout
+    return cap if provider_timeout is None else min(provider_timeout, cap)
 
 # The Patch as a strict JSON Schema (OpenAI-family structured output). `strict: true` requires every
 # property listed in `required` and `additionalProperties: false` — this is the wire equivalent of
@@ -333,8 +354,8 @@ def openai_compatible_corrector(base_url: str) -> Corrector:
     required; it is used for this one call and never logged or persisted."""
     url = f"{base_url.rstrip('/')}/chat/completions"
 
-    def corrector(model_id: str, call_spec: dict, report: dict,
-                  models_code: str, client_code: str, *, api_key: str | None = None) -> Patch:
+    def corrector(model_id: str, call_spec: dict, report: dict, models_code: str, client_code: str,
+                  *, api_key: str | None = None, timeout: float | None = None) -> Patch:
         if not api_key:
             raise ValueError("openai_compatible corrector requires a BYOK api_key")
         payload = _openai_chat_payload(
@@ -345,7 +366,7 @@ def openai_compatible_corrector(base_url: str) -> Corrector:
             resp = requests.post(
                 url, json=payload,
                 headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                timeout=_CORRECTOR_TIMEOUT,
+                timeout=_clamp_timeout(_CORRECTOR_TIMEOUT, timeout),
             )
             resp.raise_for_status()
         except requests.HTTPError as exc:
@@ -394,8 +415,8 @@ def _anthropic_error(resp) -> dict:
     return err if isinstance(err, dict) else {}
 
 
-def anthropic_corrector(model_id: str, call_spec: dict, report: dict,
-                        models_code: str, client_code: str, *, api_key: str | None = None) -> Patch:
+def anthropic_corrector(model_id: str, call_spec: dict, report: dict, models_code: str, client_code: str,
+                        *, api_key: str | None = None, timeout: float | None = None) -> Patch:
     """Anthropic Messages API corrector. Structured output via one tool whose `input_schema` is the
     Patch shape, with `tool_choice: auto` and the patch read from the reply's `tool_use` block.
     Live-verified 2026-11-09 (probe 3, haiku/sonnet/opus 5.5): forced tool_choice ("tool"/"any") and
@@ -426,7 +447,7 @@ def anthropic_corrector(model_id: str, call_spec: dict, report: dict,
             _ANTHROPIC_URL, json=payload,
             headers={"x-api-key": api_key, "anthropic-version": _ANTHROPIC_VERSION,
                      "Content-Type": "application/json"},
-            timeout=_ANTHROPIC_TIMEOUT,
+            timeout=_clamp_timeout(_ANTHROPIC_TIMEOUT, timeout),
         )
         resp.raise_for_status()
     except requests.HTTPError as exc:
@@ -522,6 +543,8 @@ def self_correct(
     api_key: str | None = None,
     provider: str | None = None,
     model: str | None = None,
+    deadline: float | None = None,
+    clock: Callable[[], float] = time.monotonic,
 ) -> CorrectionResult:
     """Iteratively patch the client and re-run it through the full sandbox until it passes or the
     capped ladder is exhausted. `failing_report` is the sandbox report from the pre-correction run.
@@ -532,7 +555,12 @@ def self_correct(
 
     `provider` picks the adapter (defaults to Gemini). `model`, when set (BYOK), pins the ladder to
     that single model retried up to the cap — no cross-model escalation on the user's own key. An
-    explicit `corrector`/`ladder` (used by the hermetic tests) overrides that resolution."""
+    explicit `corrector`/`ladder` (used by the hermetic tests) overrides that resolution.
+
+    `deadline` (a `clock()` value; ci_runner passes one for the whole run) caps the loop's wall
+    clock: each attempt's provider timeout is min(provider timeout, time left after reserving the
+    sandbox re-run), and when too little is left for an attempt the loop stops with
+    CORRECTOR_BUDGET_EXHAUSTED. None = no budget (local/dev and the older hermetic tests)."""
     assert failing_report["status"] != STATUS_PASS, "self_correct called on an already-passing run"
 
     corrector = corrector or _resolve_corrector(provider)
@@ -547,16 +575,31 @@ def self_correct(
         if report["status"] in UNFIXABLE_STATUSES:
             break
 
+        call_timeout = None
+        if deadline is not None:
+            call_timeout = deadline - clock() - SANDBOX_RERUN_RESERVE_SECONDS
+            if call_timeout < MIN_ATTEMPT_SECONDS:
+                attempts.append(Attempt(model_id, report["status"], [], CORRECTOR_BUDGET_EXHAUSTED, ""))
+                break
+
         models_code = (pkg_dir / _MODELS_FILE).read_text()
         client_code = (pkg_dir / _CLIENT_FILE).read_text()
         status_before = report["status"]
 
+        # Keywords only when set, so custom correctors that don't accept them keep working.
+        kwargs = {}
+        if api_key is not None:
+            kwargs["api_key"] = api_key
+        if call_timeout is not None:
+            kwargs["timeout"] = call_timeout
         try:
-            patch = (corrector(model_id, call_spec, report, models_code, client_code, api_key=api_key)
-                     if api_key is not None
-                     else corrector(model_id, call_spec, report, models_code, client_code))
+            patch = corrector(model_id, call_spec, report, models_code, client_code, **kwargs)
         except Exception as exc:  # classify what we recognize; stop either way, don't burn the ladder
             status_after = _classify_corrector_exception(exc, byok=api_key is not None)
+            # A timeout the budget clamp caused is the budget running out, not the provider failing.
+            if (deadline is not None and isinstance(exc, CorrectorNetworkError)
+                    and deadline - clock() <= SANDBOX_RERUN_RESERVE_SECONDS):
+                status_after = CORRECTOR_BUDGET_EXHAUSTED
             attempts.append(Attempt(model_id, status_before, [], status_after,
                                     getattr(exc, "safe_detail", ""), error_class=type(exc).__name__))
             break

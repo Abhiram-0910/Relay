@@ -1074,3 +1074,135 @@ def test_anthropic_fixes_broken_open_meteo_client(tmp_path: Path) -> None:
     assert final_status == sandbox.STATUS_PASS, final_status
     first_changed = summary[0][2]
     assert "models.py" in first_changed, first_changed
+
+
+# --- corrector wall-clock budget (one deadline per run; injectable clock) ------------------------
+
+class _Clock:
+    """A fake monotonic clock: tests advance it explicitly, nothing sleeps."""
+
+    def __init__(self, now: float = 1000.0) -> None:
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def _anthropic_ok():
+    return _fake_anthropic_response({"models_py": "# fixed\n", "client_py": "# c\n"})
+
+
+def test_budget_clamps_the_attempt_timeout_below_the_provider_timeout(tmp_path: Path) -> None:
+    """200 s left: the anthropic call gets 200 - 30 (sandbox re-run reserve) = 170 s, not its 600."""
+    from unittest.mock import patch as mock_patch
+
+    clock = _Clock()
+    with mock_patch("app.correct.requests.post", return_value=_anthropic_ok()) as post:
+        self_correct(_make_pkg(tmp_path), {"base_url": OPEN_METEO_BASE_URL},
+                     _report(sandbox.STATUS_CALL_FAILED), run_sandbox=lambda *a, **k: _report(sandbox.STATUS_PASS),
+                     api_key="sk-ant-user", provider="anthropic", model="claude-sonnet-5-5",
+                     deadline=clock.now + 200, clock=clock)
+    assert post.call_args.kwargs["timeout"] == 170
+
+
+def test_budget_keeps_the_provider_timeout_when_more_time_is_left(tmp_path: Path) -> None:
+    from unittest.mock import patch as mock_patch
+
+    clock = _Clock()
+    with mock_patch("app.correct.requests.post", return_value=_anthropic_ok()) as post:
+        self_correct(_make_pkg(tmp_path), {"base_url": OPEN_METEO_BASE_URL},
+                     _report(sandbox.STATUS_CALL_FAILED), run_sandbox=lambda *a, **k: _report(sandbox.STATUS_PASS),
+                     api_key="sk-ant-user", provider="anthropic", model="claude-sonnet-5-5",
+                     deadline=clock.now + 5000, clock=clock)
+    assert post.call_args.kwargs["timeout"] == correct._ANTHROPIC_TIMEOUT
+
+
+def test_no_deadline_leaves_the_provider_timeout_alone(tmp_path: Path) -> None:
+    from unittest.mock import patch as mock_patch
+
+    with mock_patch("app.correct.requests.post", return_value=_anthropic_ok()) as post:
+        self_correct(_make_pkg(tmp_path), {"base_url": OPEN_METEO_BASE_URL},
+                     _report(sandbox.STATUS_CALL_FAILED), run_sandbox=lambda *a, **k: _report(sandbox.STATUS_PASS),
+                     api_key="sk-ant-user", provider="anthropic", model="claude-sonnet-5-5")
+    assert post.call_args.kwargs["timeout"] == correct._ANTHROPIC_TIMEOUT
+
+
+def test_too_little_budget_stops_before_calling_the_corrector(tmp_path: Path) -> None:
+    """80 s left - 30 s reserve = 50 s < the 60 s floor: no provider call, a budget-exhausted record."""
+    clock = _Clock()
+    calls = []
+    result = self_correct(_make_pkg(tmp_path), {"base_url": OPEN_METEO_BASE_URL},
+                          _report(sandbox.STATUS_CALL_FAILED),
+                          run_sandbox=lambda *a, **k: pytest.fail("sandbox must not run"),
+                          corrector=lambda *a, **k: calls.append(a) or {},
+                          deadline=clock.now + 80, clock=clock)
+    assert calls == []
+    assert not result.succeeded
+    [a] = result.attempts
+    assert (a.status_before, a.changed_files, a.status_after, a.error_class) == (
+        sandbox.STATUS_CALL_FAILED, [], "corrector_budget_exhausted", None)
+
+
+def test_budget_is_shared_across_attempts(tmp_path: Path) -> None:
+    """Each failed attempt (corrector + sandbox re-run) burns 200 s of a 450 s budget: attempts 1
+    and 2 run, attempt 3 would have 450 - 400 - 30 = 20 s, so it stops instead of starting."""
+    clock = _Clock()
+    timeouts = []
+
+    def corrector(model_id, call_spec, report, models_code, client_code, **kwargs):
+        timeouts.append(kwargs["timeout"])
+        clock.now += 150
+        return {"models_py": models_code, "client_py": client_code}
+
+    def sandbox_run(pkg_dir, call_spec):
+        clock.now += 50
+        return _report(sandbox.STATUS_CALL_FAILED)
+
+    result = self_correct(_make_pkg(tmp_path), {"base_url": OPEN_METEO_BASE_URL},
+                          _report(sandbox.STATUS_CALL_FAILED), run_sandbox=sandbox_run,
+                          corrector=corrector, ladder=("m", "m", "m"),
+                          deadline=clock.now + 450, clock=clock)
+    assert timeouts == [420, 220]
+    assert [a.status_after for a in result.attempts] == [
+        sandbox.STATUS_CALL_FAILED, sandbox.STATUS_CALL_FAILED, "corrector_budget_exhausted"]
+
+
+@pytest.mark.parametrize("elapsed,expected", [(175, "corrector_budget_exhausted"),
+                                              (10, "corrector_network_error")])
+def test_a_timeout_at_the_deadline_reads_as_budget_exhausted(tmp_path: Path, elapsed, expected) -> None:
+    """The clamp cut the call off at the deadline -> budget; a network error with time left -> network."""
+    clock = _Clock()
+
+    def corrector(*a, **k):
+        clock.now += elapsed
+        raise correct.CorrectorNetworkError("read timeout")
+
+    result = self_correct(_make_pkg(tmp_path), {"base_url": OPEN_METEO_BASE_URL},
+                          _report(sandbox.STATUS_CALL_FAILED),
+                          run_sandbox=lambda *a, **k: pytest.fail("sandbox must not run"),
+                          corrector=corrector, deadline=clock.now + 200, clock=clock)
+    assert result.attempts[-1].status_after == expected
+
+
+def test_openai_compatible_clamps_its_timeout() -> None:
+    from unittest.mock import MagicMock, patch as mock_patch
+
+    resp = MagicMock()
+    resp.raise_for_status.return_value = None
+    resp.json.return_value = {"choices": [{"message": {"content": '{"models_py": "m", "client_py": "c"}'}}]}
+    adapter = correct.openai_compatible_corrector("https://api.openai.com/v1")
+    with mock_patch("app.correct.requests.post", return_value=resp) as post:
+        adapter("gpt-5", {}, _report(sandbox.STATUS_CALL_FAILED), "# m\n", "# c\n",
+                api_key="sk-user", timeout=42.0)
+    assert post.call_args.kwargs["timeout"] == 42.0
+
+
+def test_gemini_gets_the_budget_as_an_sdk_timeout_in_ms() -> None:
+    from unittest.mock import MagicMock, patch as mock_patch
+
+    client = MagicMock()
+    client.models.generate_content.return_value = MagicMock(parsed=MagicMock(models_py="m", client_py="c"))
+    with mock_patch("google.genai.Client", return_value=client) as ctor:
+        correct.gemini_corrector(correct.GEMINI_FLASH, {}, _report(sandbox.STATUS_CALL_FAILED),
+                                 "# m\n", "# c\n", timeout=42.5)
+    assert ctor.call_args.kwargs["http_options"].timeout == 42500

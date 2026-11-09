@@ -167,6 +167,14 @@ DEMO_PRESETS = {
 MAX_LIVE_OPERATIONS = 10
 LIVE_CALL_PAUSE_SECONDS = 1.0  # between live calls to the same host; no retries
 
+# Corrector deadline: ONE wall-clock budget for every self_correct in a run, counted from the start
+# of live validation. generate.yml's job limit is 20 min (1200 s). Before the pipeline, setup measured
+# ~29 s warm (deps 15 s, image build 13 s) -> allow 180 s cold; spec fetch + generation 60 s; the
+# pre-correction sandbox calls can still run after the deadline, up to the 210 s above; final
+# reporting (3 retries) + the infra-failure step 90 s. 1200 - 180 - 60 - 210 - 90 - 120 margin = 540.
+# Before this, a BYOK model could take 3 attempts x 600 s (Anthropic timeout) and outlive the job.
+CORRECTOR_DEADLINE_SECONDS = 540
+
 
 class Reporter:
     """Posts checkpoint snapshots to the Worker; the Worker enforces the KV write-rate throttle,
@@ -240,6 +248,7 @@ def _live_validate(spec: dict, generated: list[dict], spec_url: str, api_key: st
     escalation on the user's key); both None → shared-key Gemini flash→pro path."""
     verdicts: list[dict] = []
     info = spec.get("info") or {}
+    deadline = time.monotonic() + CORRECTOR_DEADLINE_SECONDS  # shared by every self_correct below
     live_calls = 0
     last_call_at: dict[str, float] = {}  # host -> monotonic time its last live call finished
     for item in generated:
@@ -280,7 +289,7 @@ def _live_validate(spec: dict, generated: list[dict], spec_url: str, api_key: st
             attempts: list[dict] = []
             if report["status"] != STATUS_PASS:
                 result = self_correct(pkg, call_spec, report, api_key=api_key,
-                                      provider=provider, model=model)
+                                      provider=provider, model=model, deadline=deadline)
                 report = result.final_report
                 attempts = [a.__dict__ for a in result.attempts]
 

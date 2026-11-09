@@ -483,3 +483,30 @@ def test_run_byok_fetch_failure_reports_code_and_never_reaches_corrector(monkeyp
     sandbox.assert_not_called()
     corrector.assert_not_called()
     genai_client.assert_not_called()
+
+
+def test_live_validate_passes_one_run_wide_deadline_to_self_correct(monkeypatch) -> None:
+    """Every self_correct in a run gets the SAME deadline, ~CORRECTOR_DEADLINE_SECONDS from the start
+    of live validation."""
+    import time as _time
+    from unittest.mock import MagicMock
+
+    from app import ci_runner
+    from app.correct import CorrectionResult
+
+    monkeypatch.setattr(ci_runner, "run_in_sandbox", lambda pkg, cs: {"status": "call_failed", "detail": "x"})
+    monkeypatch.setattr(ci_runner, "LIVE_CALL_PAUSE_SECONDS", 0)
+    fake = MagicMock(return_value=CorrectionResult(False, {"status": "call_failed"}, []))
+    monkeypatch.setattr(ci_runner, "self_correct", fake)
+    spec = {"openapi": "3.0.3", "servers": [{"url": "https://api.example.com"}],
+            "paths": {"/a": {"get": {}}, "/b": {"get": {}}}}
+    items = [{"endpoint": {"method": "GET", "path": p}, "params": [], "class_name": "C",
+              "method_name": "m", "models_code": "", "client_code": ""} for p in ("/a", "/b")]
+
+    before = _time.monotonic()
+    ci_runner._live_validate(spec, items, "https://specs.example/openapi.json")
+
+    deadlines = [c.kwargs["deadline"] for c in fake.call_args_list]
+    assert len(deadlines) == 2 and deadlines[0] == deadlines[1]
+    assert 0 <= deadlines[0] - before - ci_runner.CORRECTOR_DEADLINE_SECONDS < 5
+    assert ci_runner.CORRECTOR_DEADLINE_SECONDS == 540
