@@ -1168,4 +1168,95 @@ live-verified before this session. A live test on 2026-11-08 failed with `correc
 - The deadline commit changed the Gemini and OpenAI-compatible adapters' timeout arguments with
   hermetic coverage only; a live check is pending.
 
+### Session 13 addendum 2 — 2026-11-10 — mask verification, provider_unavailable + retry, Gemini scripts (Claude Code)
+Resumed after the previous session's terminal died. Commits: `eb0f747` (`::add-mask::`, pushed
+earlier), `c8c5370` (attempts record `provider_http_status`), `082efa2` (provider_unavailable +
+retry). Code CI run 42797944640 green on `082efa2`. The previous session's scratchpad (probe and
+driver scripts, spent `.ran` markers) was gone from disk; the Gemini scripts were rebuilt (below).
+
+**Mask verification (run `fcf2a584-9bd1-4343-808a-2adc3888ac42`, Action 42776178460, checkout
+`eb0f747`, Anthropic workspace key, Open-Meteo default). Read-only; no new runs.**
+- Action log: 0 lines contain `add-mask` (the runner consumes workflow commands and does not echo
+  them). The fetch succeeded (`FINAL: succeeded`, no `byok_fetch_failed`), so
+  `_mask_in_actions_log` ran. 0 matches for `sk-ant-`, `x-api-key`, `Bearer`, `api_key`,
+  `ANTHROPIC`; `RELAY_HAS_BYOK: true` once. The only `***` lines are the checkout/setup tokens,
+  `RELAY_CALLBACK_SECRET` and `GEMINI_API_KEY`.
+- KV: `byok:` prefix list is empty; `byok:<runId>` get exits non-zero (absent).
+  `byokReceivedAt` 07:33:59.997Z, `byokDeletedAt` 07:34:34.957Z (about 35 s).
+- Public `GET /api/runs/<id>`: `succeeded`, `validated[0]` `GET /v1/forecast` `verified_pass`,
+  `attempts: []`, 0 key-like strings.
+- Rate-limit keys for 20261110: `rl:runs` and `rl:models` at 1 each on 152.57.234.198 and on
+  49.37.150.83.
+- What it does not prove: the demo makes no corrector call, so no log line ever had the key to
+  mask. It shows the masked run is clean; it cannot show a masked value being replaced.
+
+**Generated-client findings (read-only, one live Open-Meteo call).**
+- The UI download names files `<path slug>_<name>`: `v1_forecast_models.py` and
+  `v1_forecast_client.py`. `GET /api/runs/<id>/code` returns `files[].name` `models.py` /
+  `client.py` with the endpoint. `client.py` does `from .models import GetV1ForecastResponse`, a
+  relative import: as downloaded it does not resolve. The user must rename both files to
+  `models.py`/`client.py` inside a package directory (with `__init__.py`). Backlog item.
+- `latitude`/`longitude` are `str` because the Open-Meteo spec declares them `type: string`
+  (required, in query). Faithful to the spec.
+- `hourly` (355 enum members) and `models` (51) exceed `params.MAX_LITERAL_MEMBERS = 50`, so they
+  are `list[str]` with lossy tag `enum_not_literal`. `daily` (22), `current` (15) and
+  `minutely_15` (26) are within the cap and get Literal aliases. Generator size cap, not spec shape.
+- Live call in the Relay sandbox (`run_in_sandbox`, the `fcf2a584` client, Berlin 52.52/13.41,
+  `hourly=temperature_2m,snow_depth,precipitation_probability`, `forecast_days=1`, `past_days=1`,
+  `daily=sunrise,sunset`): `verified_pass`. `model_validate` did not raise. The hourly items are
+  typed `list[float]` (non-nullable items), so a null array entry would raise; none was returned
+  for this call. Latent, not observed.
+- Generated clients still set no request timeout (existing backlog item).
+
+**Gemini probe (2026-11-09/10, previous session, gemini-3.8-flash, 7 calls).** The live corrector
+failed once: `ServerError` after 2.3 s.
+
+| call | variant | result |
+|---|---|---|
+| a | adapter's exact config | 503 UNAVAILABLE |
+| b, c, d, g | other variants (exact fields lost with the old scratchpad) | 503 UNAVAILABLE |
+| e | no temperature, no JSON mode | 200 STOP |
+| f | no `HttpOptions` (no X-Server-Timeout) | 503 UNAVAILABLE |
+
+Reading: transient provider capacity is the likely cause, and the timeout header is excluded (f).
+A field-triggered cause (`temperature=0.0` or `response_mime_type`/`response_schema`) is **not**
+excluded: only one call (e) dropped both fields, and it is the only one that passed.
+
+**provider_unavailable + bounded retry (`082efa2`).**
+- New code `provider_unavailable` ("Provider busy"): provider HTTP 503, 504 or 529, read from the
+  `provider_http_status` that `c8c5370` records, for the Gemini, Anthropic and OpenAI-compatible
+  adapters. Not 429 (quota) and not 500.
+- `self_correct` retries the same rung at most 2 times per run (run-wide, not per rung), after 5 s
+  then 15 s. Each retry's timeout is re-clamped to the corrector budget. No retry starts if the
+  budget left after the backoff, minus the 30 s sandbox reserve, is under 60 s: that records
+  `corrector_budget_exhausted`. Clock and sleep are injectable.
+- Mutation checks (all caught): removing the retry bound, removing the status filter, removing the
+  pre-retry budget check, removing the per-attempt timeout clamp.
+- Does not cover: 429/500, network errors and timeouts (not retried), and retries inside the
+  provider SDKs (none observed for google-genai 2.14.0 on 503 against a mock).
+
+**Gemini live scripts (not run; the user runs them).** `~/.relay-live/bin/gemini_checks.sh` reads
+the key once (hidden), checks the free `GET models/gemini-3.8-flash` (abort, no marker, on a wrong
+key, no HTTP response or non-200), then runs probe2 (6 calls `a_exact`/`e_neither` alternating,
+15 s apart, one-line prompt) and, only if at least 2 of 3 `a_exact` calls return 200, the live
+corrector (`_build_broken_open_meteo_pkg` + real sandbox, gemini-3.8-flash, with the retry). New
+markers in `~/.relay-live/`: `.gemini-probe2.ran`, `.live-gemini-corrector2.ran`. `a_exact` 0/3
+with `e_neither` 3/3 prints FIELD_SUSPECT and skips the corrector. A final `provider_unavailable`
+prints INCONCLUSIVE and deletes the corrector marker. Output carries no key and no response text.
+Dry-run against a local mock: guard down/401/500, a-pass/e-pass, a-fail/e-pass, all-503,
+INCONCLUSIVE + marker deletion, corrector-only rerun, spent-marker refusal, live-mode refusal
+when `GOOGLE_GEMINI_BASE_URL` is set. 0 fake-key leaks.
+
+**Live-test status per provider (corrector).**
+- Anthropic: `verified_pass` on claude-sonnet-5-5 only (2026-11-09). Haiku/Opus request shape only.
+- Gemini: the current default gemini-3.8-flash is pending. One failure (capacity-looking 503);
+  outcome unknown until the user runs `gemini_checks.sh`. Older Gemini receipts predate 3.8.
+- OpenRouter: none. The user has no credits. **Named residual: "OpenRouter timeout path hermetic
+  only."**
+
+**README wording rule.** No provider is called "verified" beyond what has a live receipt, and a
+receipt names the model it was taken on.
+
+**Tests:** backend 770, frontend 64, worker 73. `tsc` and `next lint` (raw exit 0) are clean.
+
 <!-- Copy the block above for each new session -->

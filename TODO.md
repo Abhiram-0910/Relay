@@ -36,7 +36,9 @@ auth". The Phase 2 sprint below is closed and kept as history.
 - [ ] **Piece 5b — live corpus table:** no-auth GET operations only, at most 5 per spec, at least 1 s between requests, run once, stub corrector, no LLM. Results go to `backend/corpus/LIVE_RESULTS.md`.
 - [ ] **Piece 6 — target auth,** per ARCHITECTURE.md Phase 3 (c), constraints 1–10 and amendments A1–A6.
 - [ ] **Piece 7 — receipt schema + MCP output:** the per-operation receipt (spec hash, endpoint, status, response-shape hash, timestamp), and an MCP server where every tool carries its receipt.
-- [ ] **OpenRouter free-key live receipt** for the `openai_compatible` adapter. The live ladder is done (2026-11-08); the corrector call is not.
+- [ ] **OpenRouter free-key live receipt** for the `openai_compatible` adapter. The live ladder is done (2026-11-08); the corrector call is not. Skipped for now (no credits): named residual "OpenRouter timeout path hermetic only".
+- [x] **provider_unavailable + bounded retry** (`c8c5370`, `082efa2`): provider 503/504/529 → `provider_unavailable`; at most 2 same-rung retries per run (5 s, 15 s), budget-clamped. Not 429/500/network.
+- [ ] **Gemini live corrector on gemini-3.8-flash:** user runs `~/.relay-live/bin/gemini_checks.sh` (probe2 + corrector, result in `~/.relay-live/gemini_checks_result.txt`). Outcome unknown until then; a field-triggered 503 (temperature / JSON mode) is not yet excluded.
 
 ### Phase 3 hygiene backlog
 - [ ] LICENSE file (none in the repo today).
@@ -54,6 +56,9 @@ auth". The Phase 2 sprint below is closed and kept as history.
 - [ ] `lossy` and `ignored` reach only `result.parameters`; they are not shown in the UI or printed to the Action log.
 - [x] **Deployed receipts for 4d–5a** (2026-11-08): Open-Meteo run `0e8159ff-…` `verified_pass`; Petstore v3 run `47c31d53-…` `failed` by design (`/user/login` `non_json_response`), 0 corrector attempts.
 - [ ] **Deployed Swagger v2 receipt still owed:** one Swagger v2 URL expecting `unsupported_spec_version`. Use direct curl/jq, not `verify_deployed.sh`.
+- [ ] Downloaded files are `v1_forecast_models.py` / `v1_forecast_client.py`, but `client.py` does `from .models import …`: as downloaded the import does not resolve. Download as a package (zip or a `models.py`/`client.py`/`__init__.py` set) or document the rename.
+- [ ] Generated array items are non-nullable (`list[float]`); a live `null` entry would fail validation. Not observed on the 2026-11-10 Open-Meteo check (past_days=1, snow_depth, precipitation_probability passed). Decide on `list[float | None]` for response arrays.
+- [ ] README says "Google Gemini and OpenAI have live receipts": true for older models only (gemini 3.8-flash pending, gpt-4o). Name the model per receipt (README wording rule, AGENTS.md Session 13 addendum 2).
 - [ ] Generated clients should take a default request timeout parameter (today a hung target hits the host's `sandbox_timeout` first). Re-run the corpus afterwards.
 - [ ] `client_exception` reaches the corrector as its class name only. Give the corrector traceback frames (file, line, function name), never messages or values.
 - [ ] **Piece 7 — label repairs honestly:** a corrector repair that changes a model to match the live response is itself a spec-vs-reality finding. The receipt must label it `repaired`, never a clean pass.
@@ -74,7 +79,7 @@ auth". The Phase 2 sprint below is closed and kept as history.
 - [ ] Fable/Mythos model families are unmatched by design (Anthropic higher tier stops at Opus). Revisit only on an owner decision.
 
 ### Phase 3 security backlog
-- [ ] Runner has no `::add-mask::` for the fetched BYOK key; a clean log depends on the code never printing it.
+- [x] Runner has no `::add-mask::` for the fetched BYOK key (fixed `eb0f747`; run `fcf2a584-…` log clean, 0 key patterns, KV `byok:` empty; AGENTS.md Session 13 addendum 2).
 - [ ] The run record stores neither the BYOK model nor the client IP, so neither is checkable after the `byok:` record is deleted.
 - [ ] `verified_live_validation_failed` detail is pydantic's `str(ValidationError)`, which quotes live response values (`input_value=`). It reaches the corrector prompt (delimited, F7) and `validated[].attempts[].detail`, which the Worker serves publicly on the run GET (it strips only `error_detail`). Found in 4g step 0; decide whether to strip `input_value` or keep the detail server-side only.
 - [ ] **Piece 6 prerequisite:** before any credential handling, scrub `attempts[].detail` and the corrector prompt of response values: status, shape hash and field paths only (`e.errors(include_input=False)`).
