@@ -75,6 +75,29 @@ class CorrectorModelError(Exception):
     to this key, or it rejects the structured-output format. A different model is the only fix."""
 
 
+def _provider_http_status(exc: BaseException) -> str | None:
+    """The provider's HTTP status for a corrector exception, as digits only ("503"), "unknown" when a
+    status is attached but isn't an integer in 100-599, or None when the exception carries no HTTP
+    status at all. Looks at the exception and its __cause__, since the adapters wrap the classified
+    ones (`raise CorrectorAuthError(...) from exc`). Sources: google-genai's APIError.code (verified
+    against the installed 2.14.0 source: set from the response's status code) and requests'
+    HTTPError.response.status_code (the OpenAI-compatible adapter)."""
+    try:
+        from google.genai.errors import APIError as _GenaiAPIError
+    except ImportError:  # pragma: no cover - the SDK is a backend dependency
+        _GenaiAPIError = ()
+    for e in (exc, exc.__cause__):
+        if isinstance(e, _GenaiAPIError):
+            code = getattr(e, "code", None)
+        elif isinstance(e, requests.HTTPError) and e.response is not None:
+            code = e.response.status_code
+        else:
+            continue
+        ok = type(code) is int and 100 <= code <= 599
+        return str(code) if ok else "unknown"
+    return None
+
+
 def _safe_token(value: object) -> str:
     """A provider enum value (stop_reason, error.type) reduced to a fixed-alphabet token, so the
     public attempt record can carry it without ever carrying provider text."""
@@ -163,6 +186,10 @@ class Attempt:
     # On that path `detail` is the exception's fixed-alphabet `safe_detail` (e.g. "stop_reason=end_turn")
     # or empty — never provider text.
     error_class: str | None = None
+    # Set only on that same path, when the exception carries the provider's HTTP status: digits only
+    # ("503") or "unknown" (see _provider_http_status). Distinct from a verdict's `http_status`, which
+    # is the target API's.
+    provider_http_status: str | None = None
 
 
 @dataclass
@@ -601,7 +628,8 @@ def self_correct(
                     and deadline - clock() <= SANDBOX_RERUN_RESERVE_SECONDS):
                 status_after = CORRECTOR_BUDGET_EXHAUSTED
             attempts.append(Attempt(model_id, status_before, [], status_after,
-                                    getattr(exc, "safe_detail", ""), error_class=type(exc).__name__))
+                                    getattr(exc, "safe_detail", ""), error_class=type(exc).__name__,
+                                    provider_http_status=_provider_http_status(exc)))
             break
 
         changed = _apply_patch(pkg_dir, patch, models_code, client_code)

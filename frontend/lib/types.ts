@@ -15,6 +15,8 @@ export interface CorrectionAttempt {
   detail: string;
   // set only when the corrector itself raised: the exception class name, never its message
   error_class?: string | null;
+  // same path, when the provider returned an HTTP error: digits only ("503") or "unknown"
+  provider_http_status?: string | null;
 }
 
 export interface ValidatedEndpoint {

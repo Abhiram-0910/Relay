@@ -111,6 +111,74 @@ def test_corrector_error_stops_the_ladder(tmp_path: Path) -> None:
     assert "quota exhausted" not in repr(result.attempts[0].__dict__)
 
 
+def _attempt_after_raise(tmp_path: Path, exc: BaseException) -> Attempt:
+    def raising_corrector(model_id, call_spec, report, models_code, client_code):
+        raise exc
+
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    result = self_correct(_make_pkg(tmp_path), {"base_url": OPEN_METEO_BASE_URL},
+                          _report(sandbox.STATUS_CALL_FAILED), corrector=raising_corrector,
+                          run_sandbox=lambda *a: pytest.fail("sandbox must not run"))
+    assert len(result.attempts) == 1
+    return result.attempts[0]
+
+
+def _http_error(status) -> requests.HTTPError:
+    resp = requests.Response()
+    resp.status_code = status
+    return requests.HTTPError("provider said something private", response=resp)
+
+
+def _raised_from(wrapper: Exception, cause: Exception) -> Exception:
+    try:
+        raise wrapper from cause
+    except Exception as e:  # noqa: BLE001 - building the chained exception the adapters raise
+        return e
+
+
+def test_gemini_server_error_records_its_http_status_never_its_message(tmp_path: Path) -> None:
+    from google.genai import errors as genai_errors
+    exc = genai_errors.ServerError(503, {"error": {"code": 503, "status": "UNAVAILABLE",
+                                                   "message": "private provider text"}})
+    a = _attempt_after_raise(tmp_path, exc)
+    assert (a.status_after, a.error_class, a.provider_http_status, a.detail) == (
+        "corrector_error", "ServerError", "503", "")
+    assert "private provider text" not in repr(a.__dict__)
+
+
+def test_wrapped_gemini_client_error_records_the_cause_status(tmp_path: Path) -> None:
+    from google.genai import errors as genai_errors
+    cause = genai_errors.ClientError(403, {"error": {"code": 403, "status": "PERMISSION_DENIED"}})
+    a = _attempt_after_raise(tmp_path, _raised_from(correct.CorrectorAuthError("x"), cause))
+    assert (a.error_class, a.provider_http_status) == ("CorrectorAuthError", "403")
+
+
+def test_openai_compatible_http_errors_record_the_status(tmp_path: Path) -> None:
+    a = _attempt_after_raise(tmp_path / "raw", _http_error(500))
+    assert (a.error_class, a.provider_http_status) == ("HTTPError", "500")
+    wrapped = _raised_from(correct.CorrectorQuotaError("x"), _http_error(429))
+    b = _attempt_after_raise(tmp_path / "wrapped", wrapped)
+    assert (b.error_class, b.provider_http_status) == ("CorrectorQuotaError", "429")
+    assert "provider said something private" not in repr(a.__dict__) + repr(b.__dict__)
+
+
+@pytest.mark.parametrize("code", [600, 99, "503", True, None, 503.0])
+def test_provider_http_status_outside_100_599_or_not_an_int_is_unknown(code) -> None:
+    from google.genai import errors as genai_errors
+    exc = genai_errors.APIError(503, {})
+    exc.code = code
+    assert correct._provider_http_status(exc) == "unknown"
+    resp = requests.Response()
+    resp.status_code = code
+    assert correct._provider_http_status(requests.HTTPError(response=resp)) == "unknown"
+
+
+def test_no_provider_http_status_when_the_exception_has_none(tmp_path: Path) -> None:
+    assert _attempt_after_raise(tmp_path, ValueError("x")).provider_http_status is None
+    assert correct._provider_http_status(requests.HTTPError("no response")) is None
+    assert correct._provider_http_status(correct.CorrectorNetworkError("x")) is None
+
+
 def test_refuses_to_correct_a_passing_run(tmp_path: Path) -> None:
     pkg = _make_pkg(tmp_path)
     with pytest.raises(AssertionError):
