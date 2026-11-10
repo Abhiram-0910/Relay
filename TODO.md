@@ -31,10 +31,12 @@ auth". The Phase 2 sprint below is closed and kept as history.
 - [x] **Piece 4h — optional-body fix, corpus follow-ups** (`9c60097`): an omitted optional body sends no body. Corpus G4 61 → 0 (exec ok 344 → 405); G2 stays 7. Step-0 findings (skip causes, recursion, lossy count) are in AGENTS.md Session 12 addendum 4.
 - [x] **Piece 4i — recursion error code** (`f922504`): a `recursion_limit_handler` raises `SpecRecursionError` (a Relay-owned `ResolutionError` subclass), classified by type as `unsupported_spec_construct` (warn, "Unsupported construct"). The report summary line now counts warn findings too ("N need attention"). Corpus: the 4 recursive specs read `load_failed:unsupported_spec_construct`; gates unchanged. Details in AGENTS.md Session 12 addendum 6.
 - [x] **Piece 5a — general param synthesis** (`5cbb1d7`): `app/synthesis.py` plans live calls from the spec alone (gates `not_get`, `requires_auth`, `possibly_state_changing`, `no_sample_value:<name>`; tiers example → examples → schema_example → default → const → enum → constraint, type-checked, no invented values). At most 10 live calls per run, 1 s apart per host, no retries. `_DEMO_TARGETS` is replaced by a labelled `DEMO_PRESETS` entry for Open-Meteo (owner decision: its lat/lon are bare strings). Petstore v3 now live-calls 1 GET (was 3); the rest are gated by `requires_auth`. Details in AGENTS.md Session 12 addendum 7.
+- [x] **Piece 8 — BYOK automatic model selection** (`b4dea7b`): the Worker ranks the key's models into a small/balanced/flagship ladder; the UI shows one proposed model to confirm. Live ladder receipts for Gemini, OpenRouter and Anthropic (OpenAI fixture-only). Follow-ups: Anthropic adapter fixed for the 5.5 models (`4521599`), attempts carry `error_class` (`190c347`), a 540 s run-wide corrector deadline (`4dded70`). Details in AGENTS.md Session 13 addendum 1.
+  - **Live receipts:** Anthropic corrector `verified_pass` on claude-sonnet-5-5 only (haiku/opus request-shape only); browser BYOK check run `9fd7ad8d-…` (key received, used once, deleted ~42 s later; demo made 0 corrector calls).
 - [ ] **Piece 5b — live corpus table:** no-auth GET operations only, at most 5 per spec, at least 1 s between requests, run once, stub corrector, no LLM. Results go to `backend/corpus/LIVE_RESULTS.md`.
 - [ ] **Piece 6 — target auth,** per ARCHITECTURE.md Phase 3 (c), constraints 1–10 and amendments A1–A6.
 - [ ] **Piece 7 — receipt schema + MCP output:** the per-operation receipt (spec hash, endpoint, status, response-shape hash, timestamp), and an MCP server where every tool carries its receipt.
-- [ ] **OpenRouter free-key live receipt** for the `openai_compatible` adapter.
+- [ ] **OpenRouter free-key live receipt** for the `openai_compatible` adapter. The live ladder is done (2026-11-08); the corrector call is not.
 
 ### Phase 3 hygiene backlog
 - [ ] LICENSE file (none in the repo today).
@@ -50,7 +52,8 @@ auth". The Phase 2 sprint below is closed and kept as history.
 - [ ] Per-user run history.
 - [ ] Scoped chatbot.
 - [ ] `lossy` and `ignored` reach only `result.parameters`; they are not shown in the UI or printed to the Action log.
-- [ ] **Deployed receipts owed after 00:00 UTC for 4d, 4e-i and 4e-ii.** Run one Open-Meteo run expecting `verified_pass`, and one Swagger v2 URL expecting `unsupported_spec_version`. Use direct curl/jq, not `verify_deployed.sh`, which uses all three of the day's runs.
+- [x] **Deployed receipts for 4d–5a** (2026-11-08): Open-Meteo run `0e8159ff-…` `verified_pass`; Petstore v3 run `47c31d53-…` `failed` by design (`/user/login` `non_json_response`), 0 corrector attempts.
+- [ ] **Deployed Swagger v2 receipt still owed:** one Swagger v2 URL expecting `unsupported_spec_version`. Use direct curl/jq, not `verify_deployed.sh`.
 - [ ] Generated clients should take a default request timeout parameter (today a hung target hits the host's `sandbox_timeout` first). Re-run the corpus afterwards.
 - [ ] `client_exception` reaches the corrector as its class name only. Give the corrector traceback frames (file, line, function name), never messages or values.
 - [ ] **Piece 7 — label repairs honestly:** a corrector repair that changes a model to match the live response is itself a spec-vs-reality finding. The receipt must label it `repaired`, never a clean pass.
@@ -63,9 +66,16 @@ auth". The Phase 2 sprint below is closed and kept as history.
 - [ ] **4h finding — non-JSON success responses are never generated:** 19 corpus operations return only `application/pdf` (7), `text/plain` (5), or one each of octet-stream/jwt/jose/xml/png/csv. Decide whether the client should return `bytes`/`str` for these instead of skipping.
 - [ ] **4f finding — spec defects, no Relay change planned:** 4 corpus specs fail validation on a default that doesn't match its schema type (`ably.io:platform`, `apptigent.com`, `art19.com`, `bhagavadgita.io`). Revisit only if real users hit this often.
 - [ ] Corpus coverage: 3.1 is only 2 specs, and the APIs.guru picks are alphabetically clustered (providers starting with a digit, `a` or `b`). Widen only with an owner decision.
+- [x] Anthropic corrector live test passed on claude-sonnet-5-5 (2026-11-09, 90.55 s, `verified_pass`).
 - [ ] The two corrector live tests (`test_gemini_fixes_broken_open_meteo_client`, `test_openai_fixes_broken_open_meteo_client`) need an LLM key and have not been re-run since 4d. Their breakage injection was re-verified against the 4d generator in 4e-i step 0b (sandbox: `verified_live_validation_failed`).
+- [ ] Anthropic streaming (calls are non-streaming with `max_tokens` 32000).
+- [ ] Live check of the Gemini and OpenAI-compatible adapters' timeout arguments after `4dded70` (hermetic coverage only).
+- [ ] Pre-4 Claude models are still ranked but would likely return `provider_rejected_request` (output cap below `max_tokens` 32000). Untested.
+- [ ] Fable/Mythos model families are unmatched by design (Anthropic higher tier stops at Opus). Revisit only on an owner decision.
 
 ### Phase 3 security backlog
+- [ ] Runner has no `::add-mask::` for the fetched BYOK key; a clean log depends on the code never printing it.
+- [ ] The run record stores neither the BYOK model nor the client IP, so neither is checkable after the `byok:` record is deleted.
 - [ ] `verified_live_validation_failed` detail is pydantic's `str(ValidationError)`, which quotes live response values (`input_value=`). It reaches the corrector prompt (delimited, F7) and `validated[].attempts[].detail`, which the Worker serves publicly on the run GET (it strips only `error_detail`). Found in 4g step 0; decide whether to strip `input_value` or keep the detail server-side only.
 - [ ] **Piece 6 prerequisite:** before any credential handling, scrub `attempts[].detail` and the corrector prompt of response values: status, shape hash and field paths only (`e.errors(include_input=False)`).
 - [ ] `spec_url` is a `workflow_dispatch` input, and dispatch inputs are visible in the public Actions UI, so a spec URL carrying a token leaks. Fix direction: the Action fetches the spec URL from `run:{runId}` in KV through the existing authenticated callback instead of receiving it as an input. Until then, the UI should warn against tokenised URLs.

@@ -1035,4 +1035,137 @@ The default demo's "verified live" therefore depends on one labelled preset.
 
 **Next piece (at the time):** 5b, the live corpus table.
 
+### Session 13 addendum 1 — 2026-11-08 → 2026-11-10 — piece 8, Anthropic corrector fix, corrector deadline (Claude Code)
+Commits: `b4dea7b` (piece 8), `190c347`, `4521599`, `4dded70`. Code CI run 42579090531 green;
+Vercel Production deployment 7649251261 on `4dded70`. The Worker was not redeployed for the three
+corrector commits (no `worker/` change).
+
+**Piece 8 — BYOK automatic model selection (`b4dea7b`).**
+- `POST /api/models` returns `{provider, ladder: [{id, tier}], default_index}`, not the full list.
+  `worker/src/modelRank.js` maps ids to `small`/`balanced`/`flagship` by per-provider naming rules.
+  It drops unknown families, unstable markers and dated twins, and defaults to the balanced tier.
+  An empty ladder returns `no_suitable_model`.
+- Frontend: the dropdown is replaced by **Find a model** → one proposed-model card → **Confirm** /
+  **Use higher model** / **Use lower model**. A started BYOK section blocks the run until a model is
+  confirmed.
+- Anthropic list call uses `limit=1000`. The 400 for a key not scoped to a workspace maps to
+  `provider_key_needs_workspace`; no provider text is forwarded.
+- **Live ladder receipts** (deployed Worker, 2026-11-08, key never in the response):
+
+| provider | when (UTC) | small | balanced (default) | flagship |
+|---|---|---|---|---|
+| Gemini | 05:59:58 | gemini-3.5-flash-lite | gemini-3.8-flash | gemini-4-argon |
+| OpenRouter | 06:03:46 | anthropic/claude-haiku-5.5 | openai/gpt-6.1-sol | google/gemini-4-argon |
+| Anthropic | 10:23:22 (hotspot re-check) | claude-haiku-5-5 | claude-sonnet-5-5 | claude-opus-5-5 |
+
+  - The first Anthropic attempt (06:03:26) returned HTTP 502 `provider_error` (upstream 400); its
+    cause was not established. The re-check from a second IP passed.
+  - The Anthropic `models:anthropic` cache held 14 ids. Unmatched: `claude-fable-5-1` and
+    `claude-fable-5`. No Mythos id was present.
+  - **OpenAI is fixture-only** (billing inactive): no live ladder receipt.
+
+**Deployed receipts for 4d–5a (2026-11-08).**
+- Run `0e8159ff-…` (Action 42456938459), Open-Meteo: `succeeded`, `/v1/forecast` `verified_pass`,
+  0 corrector attempts, spec `openapi 3.1.0`.
+- Run `47c31d53-…` (Action 42457761971), Petstore v3, `openapi 3.0.4`.
+  - The first dispatch got GitHub 502 (`dispatch_failed`) and the Worker refunded the slot; the
+    retry was an owner decision.
+  - Top-level `failed`, by design: `/user/login` → `non_json_response`.
+  - 0 corrector attempts. 13 `generated_only`: 7 `not_get`, 4 `requires_auth`, 2 `no_sample_value`.
+- No deployed Swagger v2 run was made (still owed).
+
+**Anthropic Messages API findings (live, 2026-11-08/09).** The adapter had never been
+live-verified before this session. A live test on 2026-11-08 failed with `corrector_error`.
+- **Forced `tool_choice: {"type": "tool"}` returns 400 on the 5.5 models.** Probe 1 (sonnet-5-5,
+  `req_011CgrrEWUdbYJmMYKVxW4rH`): `tool_choice: type "tool" and "any" are not supported for this
+  model.`
+- **`temperature` is deprecated on haiku, sonnet and opus 5.5:** 400 "`temperature` is deprecated for
+  this model." on all three.
+- **Thinking blocks.** With `tool_choice` auto, haiku and opus return
+  `["thinking", "tool_use"]`; sonnet returns `["tool_use"]`. Parse by block `type == "tool_use"` and
+  the tool name, never `content[0]`.
+- **Workspace-key 400.** A key not scoped to a workspace gets 400 `invalid_request_error`: "This API
+  key is not scoped to a workspace, so this request must include the anthropic-workspace-id
+  header…". The adapter and the Worker both map it to `provider_key_needs_workspace`. Relay sends
+  no `anthropic-workspace-id`; the user must use a workspace-scoped key.
+- **Probe 2 was a wrong-key paste** (an unscoped key). All 9 calls returned the workspace 400, so
+  its results are void. Probe 3 aborts unless the first call clears that error.
+- **Probe 3** (2026-11-09 07:02:11Z, one-line prompt, workspace-scoped key):
+
+| model | a: auto + temperature | b: auto, no temperature | c: no tool_choice, no temperature |
+|---|---|---|---|
+| claude-haiku-5-5 | 400 temperature deprecated | 200 tool_use; [thinking, tool_use] | 200 tool_use; [thinking, tool_use] |
+| claude-sonnet-5-5 | 400 temperature deprecated | 200 tool_use; [tool_use] | 200 tool_use; [tool_use] |
+| claude-opus-5-5 | 400 temperature deprecated | 200 tool_use; [thinking, tool_use] | 200 tool_use; [thinking, tool_use] |
+
+**What changed.**
+- `190c347`: a corrector-exception attempt stores `error_class` (the exception class name), never
+  `str(exc)`. Attempts are published via `a.__dict__`.
+- `4521599`, the Anthropic adapter:
+  - no `temperature`; `tool_choice` `{"type": "auto"}`;
+  - `max_tokens` 32000 (was 16384; the demo's `models.py` is about 40.7k chars) and a 600 s timeout;
+  - scan the content blocks for the named `tool_use`;
+  - `stop_reason == "max_tokens"` or no matching block → `corrector_no_tool_call` (detail
+    `stop_reason=<token>`);
+  - a 400 mentioning `anthropic-workspace-id` → `provider_key_needs_workspace`; any other 400 →
+    `provider_rejected_request` (detail `error_type=<token>`);
+  - safe details are `[a-z_]{1,40}` tokens only; provider text is never stored.
+- Frontend: messages and labels for the new codes ("No fix returned", "Request rejected",
+  "Auto-fix time limit"); `error_class` added to `CorrectionAttempt`.
+- Mutation checks on the adapter (all caught): re-adding temperature, `content[0]`, removing the
+  tool_use scan, dropping the name match, dropping the `max_tokens` check, forced `tool_choice`.
+
+**Receipts.**
+- **Live corrector, `verified_pass` on claude-sonnet-5-5 only** (2026-11-09 07:17:34Z, local Docker
+  sandbox, one attempt, 90.55 s). It patched `models.py` and `client.py`.
+- haiku-5-5 and opus-5-5 are **request-shape verified only** (probe 3, one-line prompt).
+- No corrector run via the hosted Action with a BYOK Anthropic key has happened yet.
+- **Browser check** (2026-11-10, run `9fd7ad8d-b822-49af-a0c9-5d8dbebec8f6`, workflow 42752238168,
+  claude-sonnet-5-5, Open-Meteo default).
+  - What it proves:
+    - The UI reached `Succeeded`, 1 operation, 1 verified live.
+    - `byokReceivedAt` was 03:52:36.841Z and `byokDeletedAt` 03:53:19.056Z (about 42 s later).
+    - KV `byok:<runId>` returns 404 and the `byok:` prefix list is empty.
+    - The Action log has `RELAY_HAS_BYOK: true` and 0 `sk-ant` matches.
+    - Counters were 1/1 (runs/models) on 152.57.234.198.
+  - What it does not prove:
+    - The demo makes zero corrector calls (`attempts: []`), so the runner made no provider call.
+    - The model choice rests on UI observation; no record stores it.
+    - The clean log covers this run only.
+
+**Corrector deadline (`4dded70`).**
+- Before: up to 3 attempts × 600 s (Anthropic) could outlast the 20-minute job.
+- Now one wall-clock deadline per run: `CORRECTOR_DEADLINE_SECONDS = 540`, counted from the start of
+  `_live_validate`.
+- Sizing against `timeout-minutes: 20` (1200 s):
+  - 180 s setup (measured about 29 s warm);
+  - 60 s spec fetch and generation;
+  - 210 s for first-pass sandbox calls (10 × 21 s worst case);
+  - 90 s reporting;
+  - 120 s margin.
+- Each attempt's timeout is `min(provider timeout, time left − 30 s)`; 30 s is reserved for the
+  sandbox re-run.
+- Under 60 s left → `corrector_budget_exhausted`, with no call made. A timeout that the clamp itself
+  caused also maps to `corrector_budget_exhausted`.
+- Gemini gets `HttpOptions(timeout=ms)`, but only when a cap is passed.
+- Mutation checks (all caught): removing the `min()` clamp (2 tests), removing the budget check (2),
+  `ci_runner` not passing the deadline (1), dropping the timeout-to-budget mapping (1).
+
+**Tests:** backend 733, frontend 64, worker 73. `tsc` and `next lint` are clean.
+
+**Residuals / backlog.**
+- The runner does not `::add-mask::` the fetched BYOK key; a clean log depends on the code never
+  printing it.
+- The run record stores neither the BYOK model nor the client IP, so neither can be checked after the
+  `byok:` record is deleted.
+- Fable/Mythos are unmatched by design: the Anthropic higher tier stops at Opus.
+- Streaming for Anthropic is in the backlog. Calls are non-streaming with `max_tokens` 32000.
+- Pre-4 Claude models (still ranked by the old-scheme rule) would likely return
+  `provider_rejected_request`: their output cap is below `max_tokens` 32000. Not live-tested.
+- `corrector_no_tool_call` is not in `UNFIXABLE_STATUSES`. That set holds sandbox report statuses
+  that decide whether the ladder starts at all. `corrector_no_tool_call` is an attempt outcome, and
+  every corrector exception already ends the ladder (`self_correct`'s `except` branch breaks).
+- The deadline commit changed the Gemini and OpenAI-compatible adapters' timeout arguments with
+  hermetic coverage only; a live check is pending.
+
 <!-- Copy the block above for each new session -->

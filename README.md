@@ -110,12 +110,12 @@ claimed done without a live receipt, and nothing gets swept under a "future work
 being named specifically. These are the real, current gaps — each one was deliberately accepted,
 not overlooked.
 
-- **Anthropic, xAI Grok, and OpenRouter self-correction have never made one real live call.**
-  Every adapter has full hermetic test coverage and Grok/OpenRouter share OpenAI's already-proven
-  wire protocol (a `base_url` swap), but no API key has ever been available to actually exercise
-  them end to end. Only Google Gemini and OpenAI have live receipts. Anthropic's tool-use protocol
-  is structurally different from the other four, so it's the one adapter genuinely unproven in a
-  way that isn't just "same code path, different key."
+- **Anthropic self-correction is verified on claude-sonnet-5-5 only.** One live corrector run
+  fixed a broken Open-Meteo client (`verified_pass`). Haiku and Opus 5.5 have only had their
+  request shape checked, and no hosted run has yet used a BYOK Anthropic key for an actual fix.
+- **xAI Grok and OpenRouter self-correction have never made one real live call.** They share
+  OpenAI's already-proven wire protocol (a `base_url` swap) and have full hermetic coverage, but
+  have not been exercised end to end. Google Gemini and OpenAI have live receipts.
 - **DNS-rebinding window on spec/redirect fetches.** The SSRF guard validates the target host
   before every fetch and redirect hop, but the actual TCP connection re-resolves DNS itself; a
   host's DNS record changing in the narrow window between validation and connect isn't caught.
