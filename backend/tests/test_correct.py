@@ -138,11 +138,11 @@ def _raised_from(wrapper: Exception, cause: Exception) -> Exception:
 
 def test_gemini_server_error_records_its_http_status_never_its_message(tmp_path: Path) -> None:
     from google.genai import errors as genai_errors
-    exc = genai_errors.ServerError(503, {"error": {"code": 503, "status": "UNAVAILABLE",
+    exc = genai_errors.ServerError(500, {"error": {"code": 500, "status": "INTERNAL",
                                                    "message": "private provider text"}})
     a = _attempt_after_raise(tmp_path, exc)
     assert (a.status_after, a.error_class, a.provider_http_status, a.detail) == (
-        "corrector_error", "ServerError", "503", "")
+        "corrector_error", "ServerError", "500", "")
     assert "private provider text" not in repr(a.__dict__)
 
 
@@ -1274,3 +1274,126 @@ def test_gemini_gets_the_budget_as_an_sdk_timeout_in_ms() -> None:
         correct.gemini_corrector(correct.GEMINI_FLASH, {}, _report(sandbox.STATUS_CALL_FAILED),
                                  "# m\n", "# c\n", timeout=42.5)
     assert ctor.call_args.kwargs["http_options"].timeout == 42500
+
+
+# --- provider_unavailable (503/504/529) and the bounded retry ------------------------------------
+
+def _genai_server_error(code: int):
+    from google.genai import errors as genai_errors
+    return genai_errors.ServerError(code, {"error": {"code": code, "status": "UNAVAILABLE",
+                                                     "message": "private provider text"}})
+
+
+@pytest.mark.parametrize("code,expected", [(503, "provider_unavailable"), (504, "provider_unavailable"),
+                                           (500, "corrector_error")])
+def test_gemini_adapter_capacity_statuses_are_provider_unavailable(code, expected) -> None:
+    from unittest.mock import patch as mock_patch
+
+    client = _fake_gemini_client(generate_content_side_effect=_genai_server_error(code))
+    with mock_patch("google.genai.Client", return_value=client):
+        with pytest.raises(Exception) as info:
+            correct.gemini_corrector("gemini-3.8-flash", {}, _report(sandbox.STATUS_CALL_FAILED),
+                                     "# m\n", "# c\n", api_key="k")
+    assert correct._classify_corrector_exception(info.value, byok=True) == expected
+
+
+@pytest.mark.parametrize("provider", ["openrouter", "anthropic"])
+@pytest.mark.parametrize("code,expected", [(503, "provider_unavailable"), (504, "provider_unavailable"),
+                                           (529, "provider_unavailable"), (500, "corrector_error"),
+                                           (429, "quota_exhausted_byok")])
+def test_requests_adapters_capacity_statuses_are_provider_unavailable(provider, code, expected) -> None:
+    from unittest.mock import patch as mock_patch
+
+    with mock_patch("app.correct.requests.post", return_value=_fake_http_error_response(code)):
+        with pytest.raises(Exception) as info:
+            correct.CORRECTORS[provider]("m", {}, _report(sandbox.STATUS_CALL_FAILED), "# m\n", "# c\n",
+                                         api_key="k")
+    assert correct._classify_corrector_exception(info.value, byok=True) == expected
+
+
+def _retry_run(tmp_path: Path, raises, *, deadline_in=None, cost=0.0, ladder=("m1", "m2", "m3"),
+               sandbox_status=sandbox.STATUS_PASS):
+    """self_correct with a fake clock and a fake sleep that advances it. `raises(n)` is the exception
+    for the n-th corrector call (0-based), or None to return a patch; the sandbox then reports
+    `sandbox_status`."""
+    clock = _Clock()
+    sleeps, calls = [], []
+
+    def fake_sleep(seconds):
+        sleeps.append(seconds)
+        clock.now += seconds
+
+    def corrector(model_id, call_spec, report, models_code, client_code, **kwargs):
+        calls.append((model_id, kwargs.get("timeout")))
+        clock.now += cost
+        if len(calls) > 6:
+            raise RuntimeError("retry loop is unbounded")
+        exc = raises(len(calls) - 1)
+        if exc is not None:
+            raise exc
+        return {"models_py": "# fixed\n", "client_py": client_code}
+
+    result = self_correct(_make_pkg(tmp_path), {"base_url": OPEN_METEO_BASE_URL},
+                          _report(sandbox.STATUS_CALL_FAILED),
+                          run_sandbox=lambda *a, **k: _report(sandbox_status),
+                          corrector=corrector, ladder=ladder,
+                          deadline=None if deadline_in is None else clock.now + deadline_in,
+                          clock=clock, sleep=fake_sleep)
+    return result, sleeps, calls
+
+
+def test_capacity_error_is_retried_on_the_same_rung_with_backoff(tmp_path: Path) -> None:
+    result, sleeps, calls = _retry_run(tmp_path, lambda n: _genai_server_error(503) if n < 2 else None)
+    assert result.succeeded
+    assert sleeps == [5, 15]
+    assert [m for m, _ in calls] == ["m1", "m1", "m1"]  # a capacity error doesn't spend a rung
+    assert [a.status_after for a in result.attempts] == [
+        "provider_unavailable", "provider_unavailable", sandbox.STATUS_PASS]
+    assert [a.provider_http_status for a in result.attempts] == ["503", "503", None]
+
+
+def test_at_most_two_retries_per_run(tmp_path: Path) -> None:
+    result, sleeps, calls = _retry_run(tmp_path, lambda n: _raised_from(RuntimeError("x"), _http_error(529)))
+    assert len(calls) == 3 and sleeps == [5, 15]
+    assert not result.succeeded
+    assert result.attempts[-1].status_after == "provider_unavailable"
+
+
+def test_the_retry_bound_is_run_wide_not_per_rung(tmp_path: Path) -> None:
+    """Rung 1: 503, retry returns a patch that still fails. Rung 2: 504, retry (the run's last), 503:
+    stop. Per-rung retries would sleep [5, 5, 15] and call five times."""
+    pattern = {0: _genai_server_error(503), 2: _genai_server_error(504), 3: _genai_server_error(503)}
+    result, sleeps, calls = _retry_run(tmp_path, pattern.get, ladder=("m1", "m2"),
+                                       sandbox_status=sandbox.STATUS_CALL_FAILED)
+    assert sleeps == [5, 15]
+    assert [m for m, _ in calls] == ["m1", "m1", "m2", "m2"]
+    assert [a.status_after for a in result.attempts] == [
+        "provider_unavailable", sandbox.STATUS_CALL_FAILED, "provider_unavailable", "provider_unavailable"]
+
+
+@pytest.mark.parametrize("exc", [
+    _http_error(500),
+    _raised_from(correct.CorrectorQuotaError("x"), _http_error(429)),
+    correct.CorrectorNetworkError("timeout"),
+    RuntimeError("no status"),
+])
+def test_only_capacity_statuses_are_retried(tmp_path: Path, exc) -> None:
+    result, sleeps, calls = _retry_run(tmp_path, lambda n: exc)
+    assert sleeps == [] and len(calls) == 1
+    assert len(result.attempts) == 1
+
+
+def test_each_retry_gets_the_budget_left_after_the_backoff(tmp_path: Path) -> None:
+    """400 s budget, each call costs 10 s: timeouts 400-30, 400-15-30, 400-40-30."""
+    result, sleeps, calls = _retry_run(tmp_path, lambda n: _genai_server_error(503) if n < 2 else None,
+                                       deadline_in=400, cost=10)
+    assert [t for _, t in calls] == [370, 355, 330]
+    assert result.succeeded
+
+
+def test_no_retry_starts_with_under_60_s_left_after_the_backoff(tmp_path: Path) -> None:
+    """95 s budget: call 1 gets 65 s, costs 1 s; a retry would have 94 - 5 - 30 = 59 s. It is not
+    started and nothing sleeps: the run records corrector_budget_exhausted."""
+    result, sleeps, calls = _retry_run(tmp_path, lambda n: _genai_server_error(503), deadline_in=95, cost=1)
+    assert len(calls) == 1 and sleeps == []
+    assert [a.status_after for a in result.attempts] == ["provider_unavailable", "corrector_budget_exhausted"]

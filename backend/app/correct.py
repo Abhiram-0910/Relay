@@ -128,6 +128,15 @@ class CorrectorKeyNeedsWorkspaceError(Exception):
     case and code as POST /api/models (worker/src/models.js anthropicNeedsWorkspace)."""
 
 
+# Provider capacity (503 unavailable, 504 gateway timeout, 529 Anthropic overloaded): no verdict on
+# the key, the model or the patch, so self_correct retries the same rung after a backoff. Not 429
+# (quota: a retry spends more of it) and not 500 (a request the provider can't serve may 500 again).
+PROVIDER_UNAVAILABLE = "provider_unavailable"
+PROVIDER_UNAVAILABLE_HTTP_STATUSES = frozenset({"503", "504", "529"})
+# Run-wide: at most len() retries, waiting these many seconds before each.
+PROVIDER_RETRY_BACKOFF_SECONDS = (5, 15)
+
+
 def _classify_corrector_exception(exc: Exception, *, byok: bool) -> str:
     """Map a corrector exception to a status code, using `byok` only where the message/fix genuinely
     differs (quota and auth) — see ARCHITECTURE.md Step 3. Unclassified exceptions (an adapter didn't
@@ -150,6 +159,9 @@ def _classify_corrector_exception(exc: Exception, *, byok: bool) -> str:
         return "provider_rejected_request"
     if isinstance(exc, CorrectorKeyNeedsWorkspaceError):
         return "provider_key_needs_workspace"
+    # The adapters re-raise these unclassified; read the status they carry (or their __cause__ carries).
+    if _provider_http_status(exc) in PROVIDER_UNAVAILABLE_HTTP_STATUSES:
+        return PROVIDER_UNAVAILABLE
     return "corrector_error"
 
 
@@ -572,6 +584,7 @@ def self_correct(
     model: str | None = None,
     deadline: float | None = None,
     clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> CorrectionResult:
     """Iteratively patch the client and re-run it through the full sandbox until it passes or the
     capped ladder is exhausted. `failing_report` is the sandbox report from the pre-correction run.
@@ -587,7 +600,11 @@ def self_correct(
     `deadline` (a `clock()` value; ci_runner passes one for the whole run) caps the loop's wall
     clock: each attempt's provider timeout is min(provider timeout, time left after reserving the
     sandbox re-run), and when too little is left for an attempt the loop stops with
-    CORRECTOR_BUDGET_EXHAUSTED. None = no budget (local/dev and the older hermetic tests)."""
+    CORRECTOR_BUDGET_EXHAUSTED. None = no budget (local/dev and the older hermetic tests).
+
+    A PROVIDER_UNAVAILABLE attempt is retried on the same rung, at most
+    len(PROVIDER_RETRY_BACKOFF_SECONDS) times per run, after that backoff. A retry is never started
+    when the budget left after the backoff is under MIN_ATTEMPT_SECONDS (CORRECTOR_BUDGET_EXHAUSTED)."""
     assert failing_report["status"] != STATUS_PASS, "self_correct called on an already-passing run"
 
     corrector = corrector or _resolve_corrector(provider)
@@ -595,8 +612,11 @@ def self_correct(
 
     report = failing_report
     attempts: list[Attempt] = []
+    retries = 0
+    rung = 0
 
-    for model_id in ladder:
+    while rung < len(ladder):
+        model_id = ladder[rung]
         if report["status"] == STATUS_PASS:
             break
         if report["status"] in UNFIXABLE_STATUSES:
@@ -630,6 +650,15 @@ def self_correct(
             attempts.append(Attempt(model_id, status_before, [], status_after,
                                     getattr(exc, "safe_detail", ""), error_class=type(exc).__name__,
                                     provider_http_status=_provider_http_status(exc)))
+            if status_after == PROVIDER_UNAVAILABLE and retries < len(PROVIDER_RETRY_BACKOFF_SECONDS):
+                wait = PROVIDER_RETRY_BACKOFF_SECONDS[retries]
+                if (deadline is not None and
+                        deadline - clock() - wait - SANDBOX_RERUN_RESERVE_SECONDS < MIN_ATTEMPT_SECONDS):
+                    attempts.append(Attempt(model_id, status_before, [], CORRECTOR_BUDGET_EXHAUSTED, ""))
+                    break
+                sleep(wait)
+                retries += 1
+                continue  # same rung; the top of the loop re-clamps the timeout to what is left
             break
 
         changed = _apply_patch(pkg_dir, patch, models_code, client_code)
@@ -641,5 +670,6 @@ def self_correct(
             status_after=report["status"],
             detail=(report.get("detail") or "")[:300],
         ))
+        rung += 1
 
     return CorrectionResult(report["status"] == STATUS_PASS, report, attempts)

@@ -49,6 +49,7 @@ const TONE_BY_STATUS: Record<string, Tone> = {
   corrector_no_tool_call: "danger",
   provider_rejected_request: "danger",
   provider_key_needs_workspace: "danger",
+  provider_unavailable: "danger",
   corrector_budget_exhausted: "danger",
   // danger — pipeline-level codes (Step 3, ci_runner.py's _classify_pipeline_error). Only ever
   // appear as run.error. Step 5: giving the run-failed banner a StatusBadge surfaced that these had
@@ -128,6 +129,7 @@ const LABELS: Record<string, string> = {
   corrector_no_tool_call: "No fix returned",
   provider_rejected_request: "Request rejected",
   provider_key_needs_workspace: "Key needs workspace",
+  provider_unavailable: "Provider busy",
   corrector_budget_exhausted: "Auto-fix time limit",
   spec_fetch_failed: "Fetch failed",
   spec_invalid: "Invalid spec",

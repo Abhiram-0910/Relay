@@ -29,7 +29,7 @@ describe("status → tone SSOT", () => {
                      "quota_exhausted_shared", "quota_exhausted_byok", "corrector_network_error",
                      "corrector_bad_response", "corrector_error", "model_unsupported",
                      "corrector_no_tool_call", "provider_rejected_request", "provider_key_needs_workspace",
-                     "corrector_budget_exhausted"]) {
+                     "provider_unavailable", "corrector_budget_exhausted"]) {
       expect(toneOf(s)).toBe("danger");
       expect(labelOf(s)).not.toBe(s); // a real short label, not a fallback to the raw code
     }

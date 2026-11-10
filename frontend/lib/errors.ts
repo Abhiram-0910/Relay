@@ -11,7 +11,8 @@
 //     corrector_auth_failed, corrector_config_error, quota_exhausted_shared/byok,
 //     corrector_network_error, corrector_bad_response, corrector_error, model_unsupported,
 //     corrector_no_tool_call, provider_rejected_request, provider_key_needs_workspace (the last is
-//     shared with POST /api/models: the same Anthropic unscoped-key case, one message), and
+//     shared with POST /api/models: the same Anthropic unscoped-key case, one message),
+//     provider_unavailable (provider HTTP 503/504/529, after self_correct's bounded retries), and
 //     corrector_budget_exhausted (self_correct's run-wide time budget, not the classifier).
 //
 // Never render a raw code, a raw exception string, or an HTTP status number to the end user —
@@ -72,6 +73,8 @@ const ERROR_MESSAGES: Record<string, string> = {
     "The model replied without returning a fix, so nothing was changed. Try again, or pick a different model.",
   provider_rejected_request:
     "The provider rejected Relay's auto-fix request for this model. This isn't a problem with your key. Try a different model.",
+  provider_unavailable:
+    "The provider was too busy to run auto-fix, even after retrying. This isn't a problem with your key or model. Try again later.",
   corrector_budget_exhausted:
     "Auto-fix ran out of time for this run, so it stopped without another attempt. The client is left as it was.",
 };
