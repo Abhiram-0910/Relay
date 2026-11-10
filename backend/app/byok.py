@@ -33,6 +33,7 @@
 #      self_correct already writes (that log currently records model output
 #      and error text — make sure the key itself never ends up in it).
 
+import os
 import time
 
 import requests
@@ -97,7 +98,20 @@ def fetch_byok_key(callback_url: str, run_id: str, callback_secret: str, timeout
         raise ByokFetchError("byok-key fetch failed: malformed response body") from e
     if not api_key:
         raise ByokFetchError("byok-key fetch failed: response carried no key")
+    _mask_in_actions_log(api_key)
     return api_key, body.get("provider"), body.get("model")
+
+
+def _mask_in_actions_log(secret: str) -> None:
+    """Register the key with the Actions runner so any later log line has it replaced by ***.
+    Workflow commands are read from stdout, so it goes there, flushed before anything else can
+    use the key. Outside Actions nothing consumes the command, so printing it would print the
+    key itself: emit nothing there. The value is escaped like @actions/core's escapeData
+    (the Worker accepts any 8-512 char string), so the runner unescapes it back to the exact key."""
+    if os.environ.get("GITHUB_ACTIONS") != "true":
+        return
+    value = str(secret).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+    print(f"::add-mask::{value}", flush=True)
 
 
 def run_with_optional_byok(callback_url, run_id, callback_secret, has_byok, provider_call):

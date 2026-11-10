@@ -110,3 +110,45 @@ def test_run_with_optional_byok_skips_fetch_when_no_byok():
         assert result == "ok"
         assert seen == {"api_key": None, "provider": None, "model": None}
         mock_get.assert_not_called()
+
+
+# --- ::add-mask:: (the runner masks the fetched key in every later Actions log line) ---
+
+@patch("app.byok.requests.get")
+def test_add_mask_is_on_stdout_before_the_key_is_used(mock_get, monkeypatch, capsys):
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    mock_get.return_value = _mock_response(200, _KEY_BODY)
+    seen_at_use = {}
+
+    def provider_call(api_key, provider, model):
+        seen_at_use["stdout"] = capsys.readouterr().out  # what the runner had read by first use
+        return "ok"
+
+    assert run_with_optional_byok("https://worker.example", "run-1", "secret", True, provider_call) == "ok"
+    assert seen_at_use["stdout"].splitlines() == ["::add-mask::sk-live-abcdef123456"]
+
+
+@patch("app.byok.requests.get")
+def test_add_mask_value_is_escaped_so_the_runner_masks_the_exact_key(mock_get, monkeypatch, capsys):
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    mock_get.return_value = _mock_response(200, {"apiKey": "ab%25c\r\nd-xyz"})
+    fetch_byok_key("https://worker.example", "run-1", "secret")
+    assert capsys.readouterr().out == "::add-mask::ab%2525c%0D%0Ad-xyz\n"
+
+
+@patch("app.byok.requests.get")
+def test_no_add_mask_and_no_key_on_stdout_outside_actions(mock_get, monkeypatch, capsys):
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    mock_get.return_value = _mock_response(200, _KEY_BODY)
+    fetch_byok_key("https://worker.example", "run-1", "secret")
+    out = capsys.readouterr().out
+    assert "sk-live-abcdef123456" not in out and "add-mask" not in out
+
+
+@patch("app.byok.requests.get")
+def test_no_add_mask_when_the_fetch_fails(mock_get, monkeypatch, capsys):
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    mock_get.return_value = _mock_response(200, {"apiKey": ""})
+    with pytest.raises(ByokFetchError):
+        fetch_byok_key("https://worker.example", "run-1", "secret")
+    assert capsys.readouterr().out == ""
